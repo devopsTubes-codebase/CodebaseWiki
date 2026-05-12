@@ -76,10 +76,12 @@ Membantu tim developer mengotomatisasi proses pembuatan dan pemeliharaan dokumen
 
 Fokus utama hackathon:
 
-- Input source project dari ZIP atau GitHub repo.
+- Sign in dengan NextAuth/Auth.js.
+- Create project.
+- Input source project dari ZIP atau GitHub repo + PAT jika private.
 - Scan project structure.
 - Generate documentation dengan AI.
-- Render hasil wiki di web.
+- Render hasil wiki multi-page seperti GitBook dengan sidebar otomatis.
 
 ### Out of Scope untuk MVP
 
@@ -134,6 +136,7 @@ Sistem harus memungkinkan user memasukkan source project melalui dua cara:
 **FR-002 — Validate Input**  
 Sistem harus memvalidasi input user:
 - jika upload ZIP, sistem hanya menerima file `.zip` yang valid
+- ukuran ZIP maksimal 50MB
 - jika GitHub URL, sistem harus memvalidasi format URL dan memastikan repository dapat diakses
 - jika repository private, sistem harus menerima PAT yang valid dengan permission minimum untuk membaca repository
 
@@ -149,6 +152,8 @@ Sistem harus membaca informasi dasar project, termasuk:
 - nama file penting
 - dependency project
 - file konfigurasi utama seperti `package.json` atau file dependency lain jika tersedia
+
+Sistem harus mengecualikan folder/file umum yang tidak relevan untuk analisis seperti `node_modules`, `.git`, `.next`, `dist`, `build`, `coverage`, `.turbo`, dan file lock/cache besar bila tidak dibutuhkan.
 
 **FR-005 — Detect Tech Stack**  
 Sistem harus dapat mengidentifikasi framework dan library utama dari project.
@@ -169,7 +174,7 @@ Sistem harus menghasilkan dokumentasi otomatis berbasis AI yang mencakup:
 - Improvement Suggestions
 
 **FR-007 — Render Wiki Documentation**  
-Sistem harus menampilkan dokumentasi dalam format Markdown/wiki yang rapi dan mudah dibaca.
+Sistem harus menampilkan dokumentasi sebagai multiple Markdown pages seperti GitBook, dengan sidebar yang digenerate otomatis dari struktur halaman/topik.
 
 **FR-008 — Show Analysis Status**  
 Sistem harus menampilkan status proses saat analisis dan AI generation sedang berjalan.
@@ -196,7 +201,7 @@ Sistem harus menampilkan pesan error yang jelas jika:
 Sistem sebaiknya menyediakan atau menyiapkan sample project agar demo hackathon dapat berjalan cepat dan stabil.
 
 **FR-011 — Authentication**  
-Sistem dapat menyediakan Sign In/Sign Up untuk mengelola akses user jika dibutuhkan pada pengembangan lanjutan.
+Sistem harus menyediakan Sign In/Sign Up menggunakan NextAuth/Auth.js agar project, PAT, dan generated docs dapat dikaitkan ke user.
 
 **FR-012 — Multi Project Support**  
 Sistem dapat memungkinkan user memasukkan lebih dari satu project agar dokumentasi dapat dikelola per project.
@@ -205,10 +210,16 @@ Sistem dapat memungkinkan user memasukkan lebih dari satu project agar dokumenta
 Sistem dapat menyediakan AI Chat Assistant untuk menjawab pertanyaan user terkait isi codebase dan dokumentasi project.
 
 **FR-014 — Private Repository Access via PAT**  
-Sistem harus mendukung akses ke private GitHub repository menggunakan Personal Access Token (PAT) yang diberikan user secara aman untuk kebutuhan read-only repository access.
+Sistem harus mendukung akses ke private GitHub repository menggunakan Personal Access Token (PAT) yang diberikan user secara aman untuk kebutuhan read-only repository access. PAT disimpan per user dalam encrypted file storage dan hanya user pemilik yang dapat revoke/delete PAT tersebut.
 
 **FR-015 — GitHub Actions Integration**  
-Sistem dapat menyediakan integrasi GitHub Actions agar dokumentasi dapat digenerate atau diperbarui otomatis dari workflow repository.
+Sistem dapat menyediakan GitHub Actions workflow template yang memanggil endpoint regenerate docs agar dokumentasi dapat diperbarui otomatis dari workflow repository.
+
+**FR-016 — Generated Docs Storage & History**  
+Sistem harus menyimpan current generated docs sebagai multi-page Markdown output. Jika docs digenerate ulang, current docs dapat di-overwrite, tetapi riwayat generation/history tetap disimpan.
+
+**FR-017 — Semantic Codebase Search**  
+Sistem dapat membuat embedding/vector index dari ringkasan codebase dan generated docs agar AI Chat dapat menjawab pertanyaan menggunakan semantic codebase search.
 
 ### Non-Functional Requirements
 
@@ -222,13 +233,16 @@ Interface harus sederhana, jelas, dan bisa digunakan tanpa tutorial panjang.
 Demo flow utama harus dapat berjalan end-to-end dengan sample project yang sudah disiapkan.
 
 **NFR-004 — Security**  
-Sistem hanya menerima file `.zip` atau GitHub repository yang dapat diakses, tidak menjalankan source code yang diupload, dan harus memperlakukan PAT sebagai credential sensitif yang tidak boleh ditampilkan kembali ke user atau dicatat ke log aplikasi.
+Sistem hanya menerima file `.zip` maksimal 50MB atau GitHub repository yang dapat diakses, tidak menjalankan source code yang diupload, dan harus memperlakukan PAT sebagai credential sensitif yang disimpan terenkripsi, tidak boleh ditampilkan kembali ke user, dan tidak boleh dicatat ke log aplikasi.
 
 **NFR-005 — Scalability**  
 Arsitektur harus memungkinkan fitur lanjutan seperti chatbot codebase dan diagram generation tanpa rewrite besar.
 
 **NFR-006 — Compatibility**  
 Website harus dapat digunakan pada browser modern seperti Chrome, Edge, dan Firefox.
+
+**NFR-007 — Temporary Storage Cleanup**  
+Temporary source storage harus dibersihkan setelah job selesai atau gagal, dengan fallback TTL cleanup 30 menit.
 
 ## Criteria Success
 
@@ -242,6 +256,8 @@ Website harus dapat digunakan pada browser modern seperti Chrome, Edge, dan Fire
 | SC-006 | Demo Ready | Flow input, analyze, generate, dan display berhasil didemokan end-to-end. |
 | SC-007 | GitHub Input Ready | User berhasil menggunakan input GitHub repository sebagai sumber project. |
 | SC-008 | Private Repo Access Ready | User berhasil mengakses private repository menggunakan PAT yang valid. |
+| SC-009 | GitBook-like Output Ready | Generated docs tampil sebagai multiple pages dengan sidebar otomatis. |
+| SC-010 | Tier 1 Flow Ready | Sign in, create project, input source, scan, generate docs, dan view wiki berhasil berjalan. |
 
 ## Catatan Tambahan
 
@@ -258,13 +274,16 @@ Input GitHub URL atau upload ZIP sample project
 
 #### Tier 1 - Wajib Demo
 
+- Sign in.
+- Create project.
 - Upload ZIP.
 - Input GitHub URL.
+- Input PAT untuk private repository.
 - Extract ZIP.
 - Clone GitHub repository.
 - Scan project structure.
 - Generate AI documentation.
-- Render wiki viewer.
+- Render multi-page wiki viewer dengan generated sidebar.
 
 #### Tier 2 - Nice to Have
 
@@ -283,9 +302,8 @@ Input GitHub URL atau upload ZIP sample project
 
 ### Open Questions
 
-- Model AI final yang dipakai: Gemini atau OpenAI?
-- Batas maksimal ukuran ZIP untuk MVP?
-- Apakah PAT hanya dipakai sementara saat request berjalan atau perlu disimpan terenkripsi untuk penggunaan berulang?
-- Sejauh mana GitHub Actions integration masuk scope hackathon: webhook manual, workflow template, atau full integration?
+- Konfigurasi OpenAI-compatible API yang dipakai: base URL, model name, dan API key management.
+- Format encrypted file storage untuk PAT per user seperti apa?
+- Storage apa yang dipakai untuk docs history dan embedding/vector index?
+- Sejauh mana GitHub Actions integration masuk scope hackathon setelah workflow template tersedia?
 - Apakah output dokumentasi perlu bisa diedit oleh user pada versi MVP?
-- Apakah hasil dokumentasi disimpan sementara atau hanya ditampilkan setelah generate?

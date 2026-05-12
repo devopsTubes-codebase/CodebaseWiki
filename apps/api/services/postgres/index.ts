@@ -26,8 +26,12 @@ import type {
   VectorIndexStoreContract,
   VectorIndexUpsertRequest,
   VectorIndexUpsertResult,
+  WikiChatMessage,
+  WikiChatStoreContract,
+  WikiChatSession,
 } from '../../types';
 import { normalizeLogLimit, sanitizeJobLog } from '../job-logs';
+import { rankGroundedKnowledgeSources } from '../semantic-search';
 import { encryptText, decryptText } from './pat-crypto';
 
 let sharedPool: Pool | null = null;
@@ -111,6 +115,30 @@ export async function initializePostgresSchema(pool = getPostgresPool()): Promis
     )
   `);
   await pool.query('create index if not exists job_logs_project_id_id_idx on job_logs(project_id, id)');
+  await pool.query(`
+    create table if not exists wiki_chat_sessions (
+      id text primary key,
+      project_id text not null references projects(id) on delete cascade,
+      user_id text not null,
+      title text not null,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    )
+  `);
+  await pool.query(`
+    create table if not exists wiki_chat_messages (
+      id text primary key,
+      session_id text not null references wiki_chat_sessions(id) on delete cascade,
+      project_id text not null references projects(id) on delete cascade,
+      user_id text not null,
+      role text not null check (role in ('user', 'assistant')),
+      content text not null,
+      sources jsonb not null default '[]'::jsonb,
+      created_at timestamptz not null default now()
+    )
+  `);
+  await pool.query('create index if not exists wiki_chat_sessions_project_user_updated_idx on wiki_chat_sessions(project_id, user_id, updated_at desc)');
+  await pool.query('create index if not exists wiki_chat_messages_session_created_idx on wiki_chat_messages(session_id, created_at asc)');
 }
 
 export class PostgresProjectStore {
@@ -275,24 +303,44 @@ export class PostgresVectorIndexStore implements VectorIndexStoreContract {
   }
 
   async retrieveContext(input: ChatRetrievalRequest): Promise<ChatRetrievalResponse> {
-    const result = await this.pool.query(
+    const vectorResult = await this.pool.query(
       `select chunk_id, text, metadata from vector_chunks
        where project_id=$1
        order by embedding <-> $2::vector
        limit $3`,
       [input.projectId, '[1,0,0]', input.maxResults],
     );
+    const docsResult = await this.pool.query('select payload from docs_current where project_id=$1', [input.projectId]);
+    const docs = docsResult.rows[0]?.payload as GeneratedDocs | undefined;
+    const generatedDocSources =
+      docs?.pages.map((page) => ({
+        source: 'generated-docs' as const,
+        reference: `generated-docs:${page.slug}`,
+        relevanceScore: 0,
+        excerpt: `${page.title}\n\n${page.content}`,
+        pageSlug: page.slug,
+        title: page.title,
+      })) ?? [];
+    const vectorSources = vectorResult.rows.map((row) => ({
+      source: row.metadata?.source === 'codebase-summary' ? 'codebase-summary' as const : 'vector-index' as const,
+      reference: `vector-index:${row.chunk_id}`,
+      relevanceScore: 0,
+      excerpt: row.text,
+      pageSlug: row.metadata?.pageSlug,
+      title: row.metadata?.pageSlug ? humanizeSlug(row.metadata.pageSlug) : row.metadata?.source === 'codebase-summary' ? 'Project summary' : undefined,
+    }));
+    const sources = rankGroundedKnowledgeSources({
+      query: input.query,
+      maxResults: input.maxResults,
+      sources: [...generatedDocSources, ...vectorSources],
+    });
+
     return {
       projectId: input.projectId,
       query: input.query,
       groundedOnly: true,
-      sources: result.rows.map((row) => ({
-        source: row.metadata?.source === 'codebase-summary' ? 'codebase-summary' : 'vector-index',
-        reference: `vector-index:${row.chunk_id}`,
-        relevanceScore: 0,
-        excerpt: row.text,
-      })),
-      context: result.rows.map((row) => row.text).join('\n\n'),
+      sources,
+      context: sources.map((source) => source.excerpt).join('\n\n'),
     };
   }
 }
@@ -337,6 +385,87 @@ export class PostgresJobLogStore implements JobLogStoreContract {
   }
 }
 
+export class PostgresWikiChatStore implements WikiChatStoreContract {
+  constructor(private readonly pool = getPostgresPool()) {}
+
+  async listSessions(input: { projectId: string; userId: string }): Promise<WikiChatSession[]> {
+    const result = await this.pool.query(
+      `select * from wiki_chat_sessions
+       where project_id=$1 and user_id=$2
+       order by updated_at desc`,
+      [input.projectId, input.userId],
+    );
+    return result.rows.map(rowToWikiChatSession);
+  }
+
+  async createSession(input: { projectId: string; userId: string; title: string }): Promise<WikiChatSession> {
+    const result = await this.pool.query(
+      `insert into wiki_chat_sessions(id, project_id, user_id, title)
+       values ($1,$2,$3,$4)
+       returning *`,
+      [randomUUID(), input.projectId, input.userId, normalizeWikiChatTitle(input.title)],
+    );
+    return rowToWikiChatSession(result.rows[0]);
+  }
+
+  async getSession(input: { projectId: string; userId: string; sessionId: string }): Promise<WikiChatSession | null> {
+    const result = await this.pool.query(
+      `select * from wiki_chat_sessions
+       where id=$1 and project_id=$2 and user_id=$3`,
+      [input.sessionId, input.projectId, input.userId],
+    );
+    return result.rows[0] ? rowToWikiChatSession(result.rows[0]) : null;
+  }
+
+  async deleteSession(input: { projectId: string; userId: string; sessionId: string }): Promise<void> {
+    await this.pool.query(
+      `delete from wiki_chat_sessions
+       where id=$1 and project_id=$2 and user_id=$3`,
+      [input.sessionId, input.projectId, input.userId],
+    );
+  }
+
+  async listMessages(input: { projectId: string; userId: string; sessionId: string }): Promise<WikiChatMessage[]> {
+    const result = await this.pool.query(
+      `select * from wiki_chat_messages
+       where session_id=$1 and project_id=$2 and user_id=$3
+       order by created_at asc`,
+      [input.sessionId, input.projectId, input.userId],
+    );
+    return result.rows.map(rowToWikiChatMessage);
+  }
+
+  async appendMessage(input: {
+    projectId: string;
+    userId: string;
+    sessionId: string;
+    role: WikiChatMessage['role'];
+    content: string;
+    sources?: WikiChatMessage['sources'];
+  }): Promise<WikiChatMessage> {
+    const result = await this.pool.query(
+      `insert into wiki_chat_messages(id, session_id, project_id, user_id, role, content, sources)
+       values ($1,$2,$3,$4,$5,$6,$7)
+       returning *`,
+      [
+        randomUUID(),
+        input.sessionId,
+        input.projectId,
+        input.userId,
+        input.role,
+        input.content,
+        JSON.stringify(input.sources ?? []),
+      ],
+    );
+    await this.pool.query('update wiki_chat_sessions set updated_at=now() where id=$1 and project_id=$2 and user_id=$3', [
+      input.sessionId,
+      input.projectId,
+      input.userId,
+    ]);
+    return rowToWikiChatMessage(result.rows[0]);
+  }
+}
+
 function rowToProject(row: QueryResultRow): Project {
   return {
     id: row.id,
@@ -361,6 +490,44 @@ function rowToJobLog(row: QueryResultRow): JobLog {
     metadata: row.metadata ?? {},
     createdAt: new Date(row.created_at).toISOString(),
   };
+}
+
+function rowToWikiChatSession(row: QueryResultRow): WikiChatSession {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    userId: row.user_id,
+    title: row.title,
+    createdAt: new Date(row.created_at).toISOString(),
+    updatedAt: new Date(row.updated_at).toISOString(),
+  };
+}
+
+function rowToWikiChatMessage(row: QueryResultRow): WikiChatMessage {
+  return {
+    id: row.id,
+    sessionId: row.session_id,
+    projectId: row.project_id,
+    userId: row.user_id,
+    role: row.role,
+    content: row.content,
+    sources: row.sources ?? [],
+    createdAt: new Date(row.created_at).toISOString(),
+  };
+}
+
+function normalizeWikiChatTitle(title: string): string {
+  const normalized = title.trim().replace(/\s+/g, ' ');
+  if (!normalized) return 'New chat';
+  return normalized.length > 64 ? `${normalized.slice(0, 61)}...` : normalized;
+}
+
+function humanizeSlug(slug: string): string {
+  return slug
+    .split('-')
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(' ');
 }
 
 function toVector3(values: number[]): string {

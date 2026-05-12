@@ -208,6 +208,52 @@ export class GroundedDocsRetrievalStub implements ChatRetrievalContract {
   }
 }
 
+export function rankGroundedKnowledgeSources(input: {
+  query: string;
+  sources: GroundedKnowledgeSource[];
+  maxResults: number;
+}): GroundedKnowledgeSource[] {
+  const queryTerms = tokenizeForLexicalSearch(input.query);
+  return input.sources
+    .map((source, index) => ({
+      source: {
+        ...source,
+        relevanceScore: Math.max(source.relevanceScore, lexicalRelevance(input.query, queryTerms, source)),
+      },
+      index,
+    }))
+    .sort((a, b) => b.source.relevanceScore - a.source.relevanceScore || a.index - b.index)
+    .slice(0, input.maxResults)
+    .map(({ source }) => source);
+}
+
+function lexicalRelevance(query: string, queryTerms: string[], source: GroundedKnowledgeSource): number {
+  const searchable = `${source.title ?? ''} ${source.pageSlug ?? ''} ${source.reference} ${source.excerpt}`.toLowerCase();
+  let score = 0;
+  for (const term of queryTerms) {
+    if (searchable.includes(term)) score += 1;
+  }
+
+  if (/\bendpoint|route|api|path|expose/.test(query.toLowerCase())) {
+    const endpointMatches = source.excerpt.match(/\b(GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)\s+\/[^\s`,)]+/gi) ?? [];
+    score += endpointMatches.length * 4;
+    if (source.pageSlug === 'api-reference') score += 3;
+    if (source.pageSlug === 'overview') score += 2;
+  }
+
+  if (source.source === 'generated-docs') score += 0.5;
+  return score;
+}
+
+function tokenizeForLexicalSearch(query: string): string[] {
+  const stopWords = new Set(['what', 'which', 'does', 'this', 'that', 'the', 'and', 'for', 'with', 'project', 'codebase']);
+  return query
+    .toLowerCase()
+    .replace(/[^a-z0-9/_-]+/g, ' ')
+    .split(/\s+/)
+    .filter((term) => term.length > 2 && !stopWords.has(term));
+}
+
 export class GroundedDocsRetrievalService implements ChatRetrievalContract {
   constructor(
     private readonly input: {
@@ -247,14 +293,20 @@ export class GroundedDocsRetrievalService implements ChatRetrievalContract {
       reference: `vector-index:${chunk.chunkId}`,
       relevanceScore: score,
       excerpt: chunk.text,
+      pageSlug: chunk.metadata.pageSlug,
     }));
+    const reranked = rankGroundedKnowledgeSources({
+      query: input.query,
+      sources,
+      maxResults: input.maxResults,
+    });
 
     return {
       projectId: input.projectId,
       query: input.query,
       groundedOnly: true,
-      sources,
-      context: ranked.map(({ chunk }) => chunk.text).join('\n\n'),
+      sources: reranked,
+      context: reranked.map((source) => source.excerpt).join('\n\n'),
     };
   }
 }

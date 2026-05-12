@@ -8,3 +8,4 @@ export * from './job-logs';
 export * from './semantic-search';
 export * from './source-ingestion';
 export * from './storage';
+export * from './wiki-chat';

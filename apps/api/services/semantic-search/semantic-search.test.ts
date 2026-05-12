@@ -4,6 +4,7 @@ import {
   OpenAICompatibleEmbeddingGenerator,
   GroundedDocsRetrievalService,
   buildSemanticIndex,
+  rankGroundedKnowledgeSources,
 } from './index';
 
 describe('semantic search preparation', () => {
@@ -176,5 +177,36 @@ describe('semantic search preparation', () => {
     expect(result.groundedOnly).toBe(true);
     expect(result.sources[0]?.reference).toBe('vector-index:docs:setup');
     expect(result.context).toContain('Run npm install and npm run dev');
+  });
+
+  test('ranks docs pages with explicit endpoint evidence above stale generic chunks', () => {
+    const ranked = rankGroundedKnowledgeSources({
+      query: 'What endpoints does this project expose?',
+      maxResults: 2,
+      sources: [
+        {
+          source: 'vector-index',
+          reference: 'vector-index:docs:architecture',
+          relevanceScore: 0,
+          excerpt: 'The proxy architecture is implemented in internal/proxy/handler.go.',
+          pageSlug: 'architecture',
+          title: 'Architecture',
+        },
+        {
+          source: 'generated-docs',
+          reference: 'generated-docs:overview',
+          relevanceScore: 0,
+          excerpt: 'The project exposes GET /v1/models, POST /v1/chat/completions, GET /health, and GET /.',
+          pageSlug: 'overview',
+          title: 'Overview',
+        },
+      ],
+    });
+
+    expect(ranked[0]).toMatchObject({
+      reference: 'generated-docs:overview',
+      pageSlug: 'overview',
+    });
+    expect(ranked[0]?.relevanceScore).toBeGreaterThan(ranked[1]?.relevanceScore ?? 0);
   });
 });

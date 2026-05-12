@@ -289,6 +289,8 @@ export interface GroundedKnowledgeSource {
   reference: string;
   relevanceScore: number;
   excerpt: string;
+  pageSlug?: string;
+  title?: string;
 }
 
 export interface SemanticIndexBuildRequest {
@@ -369,6 +371,44 @@ export interface ChatRetrievalResponse {
 
 export interface ChatRetrievalContract {
   retrieveContext(input: ChatRetrievalRequest): Promise<ChatRetrievalResponse>;
+}
+
+export type WikiChatRole = 'user' | 'assistant';
+
+export interface WikiChatSession {
+  id: string;
+  projectId: string;
+  userId: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WikiChatMessage {
+  id: string;
+  sessionId: string;
+  projectId: string;
+  userId: string;
+  role: WikiChatRole;
+  content: string;
+  sources: GroundedKnowledgeSource[];
+  createdAt: string;
+}
+
+export interface WikiChatStoreContract {
+  listSessions(input: { projectId: string; userId: string }): Promise<WikiChatSession[]>;
+  createSession(input: { projectId: string; userId: string; title: string }): Promise<WikiChatSession>;
+  getSession(input: { projectId: string; userId: string; sessionId: string }): Promise<WikiChatSession | null>;
+  deleteSession(input: { projectId: string; userId: string; sessionId: string }): Promise<void>;
+  listMessages(input: { projectId: string; userId: string; sessionId: string }): Promise<WikiChatMessage[]>;
+  appendMessage(input: {
+    projectId: string;
+    userId: string;
+    sessionId: string;
+    role: WikiChatRole;
+    content: string;
+    sources?: GroundedKnowledgeSource[];
+  }): Promise<WikiChatMessage>;
 }
 
 export type RegenerateTriggerSource = 'manual' | 'github-actions';

@@ -26,7 +26,17 @@ export async function POST(request: Request, context: { params: { projectId: str
       allowedSources: ['vector-index', 'codebase-summary'],
     });
 
-    return NextResponse.json(createDataResponse(result), { status: 200 });
+    return NextResponse.json(createDataResponse({
+      ...result,
+      results: result.sources.map((source) => ({
+        title: source.title ?? (source.source === 'codebase-summary' ? 'Project summary' : source.reference.replace(/^vector-index:/, '')),
+        pageSlug: source.pageSlug,
+        excerpt: source.excerpt,
+        source: source.source,
+        relevanceScore: source.relevanceScore,
+        href: source.pageSlug ? `/docs/${context.params.projectId}/${source.pageSlug}` : `/docs/${context.params.projectId}`,
+      })),
+    }), { status: 200 });
   } catch (error) {
     if (error instanceof UnauthorizedError) {
       return NextResponse.json({ error: { code: 'UNAUTHORIZED', message: 'Authentication is required for this endpoint' } }, { status: 401 });

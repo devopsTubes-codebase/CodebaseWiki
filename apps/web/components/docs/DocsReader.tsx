@@ -1,3 +1,6 @@
+'use client';
+
+import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { AppShell } from '@/components/ui/AppShell';
 import { Callout } from '@/components/ui/Callout';
 import { GlassCard } from '@/components/ui/GlassCard';
@@ -236,6 +239,183 @@ function FeaturedDiagram() {
   );
 }
 
+type ApiResponse<T> = { data: T };
+
+type DocsSearchResult = {
+  title: string;
+  pageSlug?: string;
+  excerpt: string;
+  source: string;
+  relevanceScore: number;
+  href: string;
+};
+
+type WikiChatSession = {
+  id: string;
+  title: string;
+  updatedAt: string;
+};
+
+type WikiChatMessage = {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  sources: Array<{ reference: string; excerpt: string; pageSlug?: string; title?: string }>;
+};
+
+function ChatMessageContent({ content }: { content: string }) {
+  const lines = content.split('\n');
+  const blocks: Array<{ type: 'paragraph'; text: string } | { type: 'list'; items: string[] }> = [];
+  let index = 0;
+
+  while (index < lines.length) {
+    const line = lines[index]?.trim() ?? '';
+    if (!line) {
+      index += 1;
+      continue;
+    }
+
+    if (/^[-*]\s+/.test(line)) {
+      const items: string[] = [];
+      while (index < lines.length && /^[-*]\s+/.test(lines[index]?.trim() ?? '')) {
+        items.push((lines[index] ?? '').replace(/^\s*[-*]\s+/, '').trim());
+        index += 1;
+      }
+      blocks.push({ type: 'list', items });
+      continue;
+    }
+
+    const paragraph: string[] = [];
+    while (index < lines.length) {
+      const current = lines[index]?.trim() ?? '';
+      if (!current || /^[-*]\s+/.test(current)) break;
+      paragraph.push(current);
+      index += 1;
+    }
+    blocks.push({ type: 'paragraph', text: paragraph.join(' ') });
+  }
+
+  return (
+    <div className="space-y-3">
+      {blocks.map((block, blockIndex) =>
+        block.type === 'list' ? (
+          <ul key={blockIndex} className="space-y-1.5">
+            {block.items.map((item) => (
+              <li key={item} className="flex gap-2">
+                <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-violet-200/70" />
+                <span>{renderInlineCode(item)}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p key={blockIndex}>{renderInlineCode(block.text)}</p>
+        ),
+      )}
+    </div>
+  );
+}
+
+async function fetchData<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, {
+    ...init,
+    headers: {
+      'content-type': 'application/json',
+      ...(init?.headers ?? {}),
+    },
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload?.error?.message ?? 'Request failed');
+  }
+  return (payload as ApiResponse<T>).data;
+}
+
+function SearchDocsModal({
+  projectId,
+  open,
+  onClose,
+}: {
+  projectId: string;
+  open: boolean;
+  onClose: () => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<DocsSearchResult[]>([]);
+  const [status, setStatus] = useState<'idle' | 'loading' | 'error'>('idle');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!query.trim()) return;
+    setStatus('loading');
+    setError('');
+    try {
+      const data = await fetchData<{ results: DocsSearchResult[] }>(`/api/projects/${projectId}/search`, {
+        method: 'POST',
+        body: JSON.stringify({ query, maxResults: 8 }),
+      });
+      setResults(data.results);
+      setStatus('idle');
+    } catch (searchError) {
+      setError(searchError instanceof Error ? searchError.message : 'Search failed');
+      setStatus('error');
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/70 px-4 py-16 backdrop-blur-sm" role="dialog" aria-modal="true">
+      <div className="mx-auto max-w-3xl overflow-hidden rounded-3xl border border-white/10 bg-[#07111d] shadow-2xl">
+        <form onSubmit={submit} className="border-b border-white/10 p-5">
+          <div className="flex items-center gap-3">
+            <SearchIcon />
+            <input
+              autoFocus
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search generated docs..."
+              className="min-w-0 flex-1 bg-transparent text-lg text-white outline-none placeholder:text-slate-500"
+            />
+            <button type="button" onClick={onClose} className="rounded-lg px-3 py-2 text-sm text-slate-400 hover:bg-white/5 hover:text-white">
+              Esc
+            </button>
+          </div>
+        </form>
+        <div className="max-h-[60vh] overflow-y-auto p-4">
+          {status === 'loading' ? <p className="p-4 text-sm text-slate-400">Searching indexed docs...</p> : null}
+          {status === 'error' ? <p className="p-4 text-sm text-red-300">{error}</p> : null}
+          {status === 'idle' && query && results.length === 0 ? <p className="p-4 text-sm text-slate-400">No indexed docs matched this query.</p> : null}
+          <div className="space-y-3">
+            {results.map((result) => (
+              <a
+                key={`${result.href}-${result.excerpt}`}
+                href={result.href}
+                className="block rounded-2xl border border-white/10 bg-white/[0.03] p-4 transition hover:border-violet-300/40 hover:bg-white/[0.06]"
+              >
+                <div className="flex items-center justify-between gap-4">
+                  <p className="font-semibold text-white">{result.title}</p>
+                  <span className="rounded-full border border-white/10 px-2 py-1 text-[11px] uppercase tracking-[0.12em] text-slate-400">{result.source}</span>
+                </div>
+                <p className="mt-2 line-clamp-3 text-sm leading-6 text-[#a1a1aa]">{result.excerpt}</p>
+              </a>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ArticleCanvas({ model }: { model: DocsReaderModel }) {
   const callouts =
     model.projectId === 'project-alpha'
@@ -308,24 +488,203 @@ function ArticleCanvas({ model }: { model: DocsReaderModel }) {
   );
 }
 
-function AskWikiPanel() {
+function AskWikiPanel({ projectId }: { projectId: string }) {
+  const [sessions, setSessions] = useState<WikiChatSession[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState('');
+  const [messages, setMessages] = useState<WikiChatMessage[]>([]);
+  const [input, setInput] = useState('');
+  const [status, setStatus] = useState<'idle' | 'loading' | 'sending' | 'error'>('loading');
+  const [error, setError] = useState('');
+  const endRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadSessions() {
+      try {
+        setStatus('loading');
+        const data = await fetchData<{ sessions: WikiChatSession[] }>(`/api/projects/${projectId}/wiki-chat/sessions`);
+        if (cancelled) return;
+        setSessions(data.sessions);
+        const latest = data.sessions[0];
+        if (latest) {
+          setActiveSessionId(latest.id);
+          const messageData = await fetchData<{ messages: WikiChatMessage[] }>(`/api/projects/${projectId}/wiki-chat/sessions/${latest.id}/messages`);
+          if (!cancelled) setMessages(messageData.messages);
+        }
+        if (!cancelled) setStatus('idle');
+      } catch (loadError) {
+        if (!cancelled) {
+          setError(loadError instanceof Error ? loadError.message : 'Failed to load Ask Wiki');
+          setStatus('error');
+        }
+      }
+    }
+    loadSessions();
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ block: 'end' });
+  }, [messages]);
+
+  async function newChat() {
+    const data = await fetchData<{ session: WikiChatSession }>(`/api/projects/${projectId}/wiki-chat/sessions`, {
+      method: 'POST',
+      body: JSON.stringify({ title: 'New chat' }),
+    });
+    setSessions((current) => [data.session, ...current]);
+    setActiveSessionId(data.session.id);
+    setMessages([]);
+  }
+
+  async function loadSession(sessionId: string) {
+    setActiveSessionId(sessionId);
+    setStatus('loading');
+    const data = await fetchData<{ messages: WikiChatMessage[] }>(`/api/projects/${projectId}/wiki-chat/sessions/${sessionId}/messages`);
+    setMessages(data.messages);
+    setStatus('idle');
+  }
+
+  async function deleteActiveSession() {
+    if (!activeSessionId) return;
+    await fetchData<{ deleted: boolean }>(`/api/projects/${projectId}/wiki-chat/sessions/${activeSessionId}`, { method: 'DELETE' });
+    const remaining = sessions.filter((session) => session.id !== activeSessionId);
+    setSessions(remaining);
+    setMessages([]);
+    setActiveSessionId('');
+    if (remaining[0]) {
+      await loadSession(remaining[0].id);
+    }
+  }
+
+  async function sendMessage() {
+    const question = input.trim();
+    if (!question || status === 'sending') return;
+    setInput('');
+    setError('');
+    setStatus('sending');
+    try {
+      let sessionId = activeSessionId;
+      if (!sessionId) {
+        const created = await fetchData<{ session: WikiChatSession }>(`/api/projects/${projectId}/wiki-chat/sessions`, {
+          method: 'POST',
+          body: JSON.stringify({ title: question }),
+        });
+        sessionId = created.session.id;
+        setActiveSessionId(sessionId);
+        setSessions((current) => [created.session, ...current]);
+      }
+      const data = await fetchData<{ session: WikiChatSession; messages: WikiChatMessage[] }>(
+        `/api/projects/${projectId}/wiki-chat/sessions/${sessionId}/messages`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ question }),
+        },
+      );
+      setMessages(data.messages);
+      setSessions((current) => [data.session, ...current.filter((session) => session.id !== data.session.id)]);
+      setStatus('idle');
+    } catch (sendError) {
+      setInput(question);
+      setError(sendError instanceof Error ? sendError.message : 'Failed to send message');
+      setStatus('error');
+    }
+  }
+
   return (
     <aside className="hidden w-[490px] shrink-0 border-l border-white/10 bg-[#050912] px-8 py-8 2xl:block" aria-label="Ask Wiki panel">
-      <div className="sticky top-24">
-        <GlassCard className="p-5">
-          <p className="text-sm font-semibold text-white">Ask Wiki</p>
-          <p className="mt-2 text-sm leading-6 text-[#a1a1aa]">
-            Semantic search is not connected yet, so this wide-screen affordance is disabled until backend support is available.
-          </p>
-          <textarea
-            disabled
-            value="Ask about Project Alpha..."
-            readOnly
-            className="mt-5 h-28 w-full resize-none rounded-xl border border-white/10 bg-black/20 p-4 text-sm text-slate-500 outline-none"
-          />
-          <GradientButton disabled variant="ask" className="mt-4 w-full">
-            Send
-          </GradientButton>
+      <div className="sticky top-24 flex h-[calc(100vh-120px)] flex-col">
+        <GlassCard className="flex min-h-0 flex-1 flex-col p-5">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-white">Ask Wiki</p>
+              <p className="mt-1 text-xs text-[#a1a1aa]">Grounded in indexed docs.</p>
+            </div>
+            <button onClick={newChat} className="rounded-lg border border-white/10 px-3 py-2 text-xs font-semibold text-slate-300 hover:bg-white/5 hover:text-white">
+              New chat
+            </button>
+          </div>
+
+          {sessions.length > 0 ? (
+            <div className="mt-4 flex gap-2">
+              <select
+                value={activeSessionId}
+                onChange={(event) => loadSession(event.target.value)}
+                className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-slate-200 outline-none"
+              >
+                {sessions.map((session) => (
+                  <option key={session.id} value={session.id} className="bg-[#07111d]">
+                    {session.title}
+                  </option>
+                ))}
+              </select>
+              <button onClick={deleteActiveSession} className="rounded-xl border border-white/10 px-3 py-2 text-xs text-slate-400 hover:bg-white/5 hover:text-white">
+                Delete
+              </button>
+            </div>
+          ) : null}
+
+          <div className="mt-4 min-h-0 flex-1 overflow-y-auto pr-1">
+            {status === 'loading' ? <p className="text-sm text-slate-400">Loading chat history...</p> : null}
+            {messages.length === 0 && status !== 'loading' ? (
+              <div className="space-y-3 text-sm text-[#a1a1aa]">
+                <p>Ask about endpoints, authentication, architecture, or source files.</p>
+                {['What endpoints does this project expose?', 'How does authentication work?', 'Which files implement the main behavior?'].map((prompt) => (
+                  <button
+                    key={prompt}
+                    onClick={() => setInput(prompt)}
+                    className="block w-full rounded-xl border border-white/10 bg-white/[0.03] p-3 text-left text-slate-300 hover:bg-white/[0.06]"
+                  >
+                    {prompt}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            <div className="space-y-4">
+              {messages.map((message) => (
+                <div key={message.id} className={cn('rounded-2xl p-4 text-sm leading-6', message.role === 'user' ? 'ml-8 bg-violet-500/15 text-white' : 'mr-8 border border-white/10 bg-white/[0.03] text-[#d4d4d8]')}>
+                  <ChatMessageContent content={message.content} />
+                  {message.sources?.length ? (
+                    <div className="mt-4 border-t border-white/10 pt-2 text-[11px] leading-5 text-slate-500">
+                      <span className="mr-2 uppercase tracking-[0.14em]">Sources</span>
+                      {message.sources.slice(0, 4).map((source) => (
+                        <a
+                          key={source.reference}
+                          href={source.pageSlug ? `/docs/${projectId}/${source.pageSlug}` : `/docs/${projectId}`}
+                          className="mr-2 text-slate-400 underline decoration-white/10 underline-offset-4 transition hover:text-violet-100"
+                          title={source.excerpt}
+                        >
+                          {source.title ?? source.reference.replace(/^vector-index:/, '')}
+                        </a>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+              <div ref={endRef} />
+            </div>
+          </div>
+
+          {error ? <p className="mt-3 text-xs text-red-300">{error}</p> : null}
+          <div className="mt-4">
+            <textarea
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault();
+                  sendMessage();
+                }
+              }}
+              placeholder="Ask about this codebase..."
+              className="h-24 w-full resize-none rounded-xl border border-white/10 bg-black/20 p-4 text-sm text-white outline-none placeholder:text-slate-500 focus:border-violet-300/50"
+            />
+            <GradientButton onClick={sendMessage} disabled={status === 'sending' || !input.trim()} variant="ask" className="mt-3 w-full">
+              {status === 'sending' ? 'Thinking...' : 'Send'}
+            </GradientButton>
+          </div>
         </GlassCard>
       </div>
     </aside>
@@ -333,6 +692,7 @@ function AskWikiPanel() {
 }
 
 export function DocsReader({ model }: { model?: DocsReaderModel }) {
+  const [searchOpen, setSearchOpen] = useState(false);
   const readerModel: DocsReaderModel = model ?? {
     projectId: 'project-alpha',
     projectName: docsArticle.projectName,
@@ -358,21 +718,22 @@ export function DocsReader({ model }: { model?: DocsReaderModel }) {
     <AppShell
       actions={
         <>
-          <GradientButton variant="search" leadingIcon={<SearchIcon />} className="hidden h-11 w-[376px] justify-start px-8 md:inline-flex">
+          <GradientButton onClick={() => setSearchOpen(true)} variant="search" leadingIcon={<SearchIcon />} className="hidden h-11 w-[376px] justify-start px-8 md:inline-flex">
             Search docs....
           </GradientButton>
-          <GradientButton disabled variant="ask" leadingIcon={<SparkIcon />} className="hidden h-11 px-8 xl:inline-flex">
+          <GradientButton variant="ask" leadingIcon={<SparkIcon />} className="hidden h-11 px-8 xl:inline-flex">
             Ask Wiki
           </GradientButton>
         </>
       }
     >
+      <SearchDocsModal projectId={readerModel.projectId} open={searchOpen} onClose={() => setSearchOpen(false)} />
       <div className="flex min-h-[calc(100vh-64px)]">
         <DocsSidebar model={readerModel} />
         <main className="min-w-0 flex-1">
           <ArticleCanvas model={readerModel} />
         </main>
-        <AskWikiPanel />
+        <AskWikiPanel projectId={readerModel.projectId} />
       </div>
     </AppShell>
   );

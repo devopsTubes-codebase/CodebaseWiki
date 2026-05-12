@@ -23,7 +23,7 @@ export class CodebaseDocPromptBuilderStub implements CodebaseDocPromptBuilderCon
     return {
       systemPrompt: [
         'You are a technical documentation generator.',
-        'Return output as Markdown sections suitable for multi-page splitting.',
+        'Return output as multiple Markdown pages grouped by topic.',
         'TODO: tighten prompt constraints after Wave 1 compact-context quality is finalized.',
       ].join('\n'),
       userPrompt: [

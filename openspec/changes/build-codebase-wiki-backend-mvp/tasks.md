@@ -34,17 +34,17 @@
 
 ## 6. AI documentation generation
 
-- [ ] 6.1 Implement OpenAI-compatible AI provider client
-- [ ] 6.2 Implement prompt builder for codebase documentation generation
-- [ ] 6.3 Implement Markdown formatter and page splitter for multi-page docs
-- [ ] 6.4 Implement generated sidebar metadata creation
-- [ ] 6.5 Implement current docs overwrite with docs history retention
+- [x] 6.1 Implement OpenAI-compatible AI provider client
+- [x] 6.2 Implement prompt builder for codebase documentation generation
+- [x] 6.3 Implement Markdown formatter and page splitter for multi-page docs
+- [x] 6.4 Implement generated sidebar metadata creation
+- [x] 6.5 Implement current docs overwrite with docs history retention
 
 ## 7. Storage and retrieval
 
-- [ ] 7.1 Implement documentation store for current docs, metadata, and status
-- [ ] 7.2 Implement docs history storage strategy
-- [ ] 7.3 Implement backend retrieval contract for multi-page docs and generated sidebar
+- [x] 7.1 Implement documentation store for current docs, metadata, and status
+- [x] 7.2 Implement docs history storage strategy
+- [x] 7.3 Implement backend retrieval contract for multi-page docs and generated sidebar
 
 ## 8. Semantic search preparation
 

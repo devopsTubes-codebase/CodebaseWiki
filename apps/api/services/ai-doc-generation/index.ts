@@ -1,5 +1,6 @@
 import type {
   DocsHistoryStoreContract,
+  DocumentationStoreContract,
   GeneratedDocs,
   GeneratedDocsPage,
   GeneratedSidebarItem,
@@ -33,6 +34,14 @@ export interface AIDocGenerationPreparedArtifacts {
   modelOutput: AIGenerationResponse;
   pages: GeneratedDocsPage[];
   sidebar: GeneratedSidebarItem[];
+}
+
+export interface AIDocGenerationServiceInput {
+  pipeline: AIDocGenerationPipelineContract;
+  docsStore: DocumentationStoreContract;
+  docsHistoryStore: DocsHistoryStoreContract;
+  model: string;
+  suggestedDocStructure: string[];
 }
 
 export function createAIDocGenerationPipelineStub(input: AIDocGenerationPipelineContract): AIDocGenerationPipelineContract {
@@ -88,6 +97,36 @@ export async function runAIDocGenerationPipelineStub(input: {
     modelOutput,
     pages,
     sidebar,
+  };
+}
+
+export function createAIDocGenerationService(input: AIDocGenerationServiceInput): AIDocGenerationServiceContract {
+  return {
+    async generateDocs(args: { projectId: string; compactContext: string }): Promise<GeneratedDocs> {
+      const prepared = await runAIDocGenerationPipelineStub({
+        pipeline: input.pipeline,
+        projectId: args.projectId,
+        model: input.model,
+        compactContext: args.compactContext,
+        suggestedDocStructure: input.suggestedDocStructure,
+      });
+
+      const previousDocs = await input.docsStore.getCurrentDocs(args.projectId);
+      const nextDocs: GeneratedDocs = {
+        projectId: args.projectId,
+        pages: prepared.pages,
+        sidebar: prepared.sidebar,
+        generatedAt: prepared.modelOutput.generatedAt,
+        version: previousDocs ? previousDocs.version + 1 : 1,
+      };
+
+      await input.docsStore.overwriteCurrentDocsWithHistoryRetention({
+        nextDocs,
+        previousDocs,
+      });
+
+      return nextDocs;
+    },
   };
 }
 

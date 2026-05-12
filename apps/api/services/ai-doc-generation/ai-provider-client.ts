@@ -1,4 +1,5 @@
 import type { GeneratedDocsPage } from '../../types';
+import OpenAI from 'openai';
 
 export interface AIGenerationMessage {
   role: 'system' | 'user' | 'assistant';
@@ -26,6 +27,28 @@ export interface OpenAICompatibleAIClientContract {
 
 export interface AIDocumentGenerationOutput {
   pages: GeneratedDocsPage[];
+}
+
+export class OpenAICompatibleAIClient implements OpenAICompatibleAIClientContract {
+  constructor(
+    private readonly client: Pick<OpenAI, 'chat'>,
+  ) {}
+
+  async generateText(input: AIGenerationRequest): Promise<AIGenerationResponse> {
+    const response = await this.client.chat.completions.create({
+      model: input.model,
+      messages: input.messages,
+      temperature: input.temperature,
+      max_tokens: input.maxTokens,
+    });
+
+    return {
+      projectId: input.projectId,
+      model: input.model,
+      content: response.choices[0]?.message?.content ?? '',
+      generatedAt: new Date().toISOString(),
+    };
+  }
 }
 
 export class OpenAICompatibleAIClientStub implements OpenAICompatibleAIClientContract {

@@ -41,6 +41,57 @@ export interface ProjectStatusSnapshot {
 
 export type ProjectStatusResponse = ApiDataResponse<ProjectStatusSnapshot>;
 
+export type JobLogLevel = 'info' | 'warn' | 'error' | 'debug';
+
+export type JobLogPhase =
+  | 'queued'
+  | 'uploading'
+  | 'cloning'
+  | 'extracting'
+  | 'scanning'
+  | 'enriching'
+  | 'generating'
+  | 'indexing'
+  | 'cleanup'
+  | 'completed'
+  | 'failed';
+
+export interface JobLog {
+  id: string;
+  projectId: string;
+  level: JobLogLevel;
+  phase: JobLogPhase;
+  message: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface AppendJobLogInput {
+  projectId: string;
+  level: JobLogLevel;
+  phase: JobLogPhase;
+  message: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ListJobLogsInput {
+  projectId: string;
+  afterId?: string;
+  limit?: number;
+}
+
+export interface JobLogStoreContract {
+  appendLog(input: AppendJobLogInput): Promise<JobLog>;
+  listLogs(input: ListJobLogsInput): Promise<JobLog[]>;
+}
+
+export interface JobLogsSnapshot {
+  projectId: string;
+  logs: JobLog[];
+}
+
+export type JobLogsResponse = ApiDataResponse<JobLogsSnapshot>;
+
 export interface UserPAT {
   id: string;
   userId: string;

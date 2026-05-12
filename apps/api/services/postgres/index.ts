@@ -12,6 +12,10 @@ import type {
   DocsRetrievalServiceContract,
   DocumentationStoreContract,
   GeneratedDocs,
+  AppendJobLogInput,
+  JobLog,
+  JobLogStoreContract,
+  ListJobLogsInput,
   Project,
   ResolveUserPATInput,
   ResolvedUserPAT,
@@ -23,6 +27,7 @@ import type {
   VectorIndexUpsertRequest,
   VectorIndexUpsertResult,
 } from '../../types';
+import { normalizeLogLimit, sanitizeJobLog } from '../job-logs';
 import { encryptText, decryptText } from './pat-crypto';
 
 let sharedPool: Pool | null = null;
@@ -94,6 +99,18 @@ export async function initializePostgresSchema(pool = getPostgresPool()): Promis
       unique(project_id, chunk_id)
     )
   `);
+  await pool.query(`
+    create table if not exists job_logs (
+      id bigserial primary key,
+      project_id text not null references projects(id) on delete cascade,
+      level text not null check (level in ('info', 'warn', 'error', 'debug')),
+      phase text not null check (phase in ('queued', 'uploading', 'cloning', 'extracting', 'scanning', 'enriching', 'generating', 'indexing', 'cleanup', 'completed', 'failed')),
+      message text not null,
+      metadata jsonb not null default '{}'::jsonb,
+      created_at timestamptz not null default now()
+    )
+  `);
+  await pool.query('create index if not exists job_logs_project_id_id_idx on job_logs(project_id, id)');
 }
 
 export class PostgresProjectStore {
@@ -279,6 +296,46 @@ export class PostgresVectorIndexStore implements VectorIndexStoreContract {
   }
 }
 
+export class PostgresJobLogStore implements JobLogStoreContract {
+  constructor(private readonly pool = getPostgresPool()) {}
+
+  async appendLog(input: AppendJobLogInput): Promise<JobLog> {
+    const sanitized = sanitizeJobLog({
+      id: '0',
+      projectId: input.projectId,
+      level: input.level,
+      phase: input.phase,
+      message: input.message,
+      metadata: input.metadata ?? {},
+      createdAt: new Date().toISOString(),
+    });
+    const result = await this.pool.query(
+      `insert into job_logs(project_id, level, phase, message, metadata)
+       values ($1,$2,$3,$4,$5)
+       returning *`,
+      [
+        sanitized.projectId,
+        sanitized.level,
+        sanitized.phase,
+        sanitized.message,
+        JSON.stringify(sanitized.metadata),
+      ],
+    );
+    return rowToJobLog(result.rows[0]);
+  }
+
+  async listLogs(input: ListJobLogsInput): Promise<JobLog[]> {
+    const result = await this.pool.query(
+      `select * from job_logs
+       where project_id=$1 and id > $2
+       order by id asc
+       limit $3`,
+      [input.projectId, input.afterId ?? '0', normalizeLogLimit(input.limit)],
+    );
+    return result.rows.map(rowToJobLog);
+  }
+}
+
 function rowToProject(row: QueryResultRow): Project {
   return {
     id: row.id,
@@ -290,6 +347,18 @@ function rowToProject(row: QueryResultRow): Project {
     status: row.status,
     createdAt: new Date(row.created_at).toISOString(),
     updatedAt: new Date(row.updated_at).toISOString(),
+  };
+}
+
+function rowToJobLog(row: QueryResultRow): JobLog {
+  return {
+    id: String(row.id),
+    projectId: row.project_id,
+    level: row.level,
+    phase: row.phase,
+    message: row.message,
+    metadata: row.metadata ?? {},
+    createdAt: new Date(row.created_at).toISOString(),
   };
 }
 

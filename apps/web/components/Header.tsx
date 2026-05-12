@@ -1,27 +1,29 @@
-import React from 'react';
-import { Button } from './Button';
+import { GradientButton } from './ui/GradientButton';
+import { LogoMark } from './ui/LogoMark';
 
 export function Header() {
   return (
-    <header className="fixed top-0 left-0 right-0 z-50 bg-[rgba(8,15,23,0.8)] backdrop-blur-md border-b border-[rgba(255,255,255,0.1)]">
-      <div className="max-w-[1280px] mx-auto px-6 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 bg-gradient-to-r from-[#6366f1] to-[#a855f7] rounded-lg"></div>
+    <header className="fixed left-0 right-0 top-0 z-50 border-b border-white/10 bg-[rgba(8,15,23,0.8)] backdrop-blur-md">
+      <div className="mx-auto flex max-w-[1280px] items-center justify-between px-6 py-4">
+        <div className="flex items-center gap-3">
+          <LogoMark size="h-8 w-8" />
           <span className="text-xl font-bold text-white">Codebase Wiki</span>
         </div>
 
-        <nav className="hidden md:flex items-center gap-8">
-          <a href="#features" className="text-[#a1a1aa] hover:text-white transition-colors">
+        <nav className="hidden items-center gap-8 md:flex">
+          <a href="#features" className="text-[#a1a1aa] transition-colors hover:text-white">
             Features
           </a>
-          <a href="#docs" className="text-[#a1a1aa] hover:text-white transition-colors">
+          <a href="#docs" className="text-[#a1a1aa] transition-colors hover:text-white">
             Documentation
           </a>
         </nav>
 
-        <div className="flex items-center gap-4">
-          <Button variant="secondary">Log in</Button>
-          <Button variant="primary">Get Started</Button>
+        <div className="flex items-center gap-3">
+          <GradientButton variant="ghost" className="px-3 py-2">
+            Log in
+          </GradientButton>
+          <GradientButton className="px-5 py-3">Get Started</GradientButton>
         </div>
       </div>
     </header>

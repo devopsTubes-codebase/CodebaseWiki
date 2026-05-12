@@ -1,3 +1,6 @@
+import { AppShell } from '@/components/ui/AppShell';
+import { GradientButton } from '@/components/ui/GradientButton';
+
 function EmptyCodebaseIllustration() {
   return (
     <div
@@ -32,13 +35,7 @@ function EmptyCodebaseIllustration() {
 
 export default function DashboardPage() {
   return (
-    <main className="min-h-screen overflow-hidden bg-[#080f17] text-slate-100">
-      <header className="flex h-[62px] items-center border-b border-slate-500/35 px-12">
-        <h1 className="text-2xl font-bold tracking-[-0.03em] text-[#dddfff]">
-          Codebase Wiki
-        </h1>
-      </header>
-
+    <AppShell>
       <section className="relative isolate flex min-h-[calc(100vh-62px)] items-center justify-center px-6">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(15,23,42,0.46),rgba(8,15,23,0.86)_52%,#080f17_78%)]" />
         <EmptyCodebaseIllustration />
@@ -47,11 +44,11 @@ export default function DashboardPage() {
           <p className="mb-7 text-[36px] font-bold leading-none tracking-[-0.045em] text-slate-200 drop-shadow-[0_2px_12px_rgba(2,6,23,0.7)]">
             Not Project Found
           </p>
-          <button className="rounded-lg bg-gradient-to-r from-[#7b82ff] to-[#6618d8] px-10 py-[14px] text-base font-bold text-white shadow-[0_18px_34px_rgba(93,33,216,0.32)] transition duration-200 hover:-translate-y-0.5 hover:shadow-[0_22px_40px_rgba(93,33,216,0.42)] focus:outline-none focus:ring-2 focus:ring-violet-300 focus:ring-offset-2 focus:ring-offset-[#080f17]">
+          <GradientButton className="px-10 py-[14px] font-bold">
             Upload Project
-          </button>
+          </GradientButton>
         </div>
       </section>
-    </main>
+    </AppShell>
   );
 }

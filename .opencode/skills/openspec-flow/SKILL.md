@@ -12,6 +12,8 @@ OpenSpec flow helper for natural-language requests.
 
 Use this skill when the user wants to work with OpenSpec by describing the idea in plain language instead of typing workflow commands manually.
 
+This skill is available in Droid directly, so the user can invoke OpenSpec without slash commands or extra setup.
+
 ## Core behavior
 
 - Read the user's request and infer the OpenSpec phase.

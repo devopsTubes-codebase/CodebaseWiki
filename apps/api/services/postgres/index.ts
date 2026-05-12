@@ -16,6 +16,9 @@ import type {
   JobLog,
   JobLogStoreContract,
   ListJobLogsInput,
+  MCPToken,
+  MCPTokenRecord,
+  MCPTokenStoreContract,
   Project,
   ResolveUserPATInput,
   ResolvedUserPAT,
@@ -139,6 +142,21 @@ export async function initializePostgresSchema(pool = getPostgresPool()): Promis
   `);
   await pool.query('create index if not exists wiki_chat_sessions_project_user_updated_idx on wiki_chat_sessions(project_id, user_id, updated_at desc)');
   await pool.query('create index if not exists wiki_chat_messages_session_created_idx on wiki_chat_messages(session_id, created_at asc)');
+  await pool.query(`
+    create table if not exists mcp_tokens (
+      id text primary key,
+      project_id text not null references projects(id) on delete cascade,
+      user_id text not null,
+      name text not null,
+      token_hash text not null unique,
+      token_prefix text not null,
+      scopes jsonb not null default '["read:docs"]'::jsonb,
+      created_at timestamptz not null default now(),
+      last_used_at timestamptz,
+      revoked_at timestamptz
+    )
+  `);
+  await pool.query('create index if not exists mcp_tokens_project_user_created_idx on mcp_tokens(project_id, user_id, created_at desc)');
 }
 
 export class PostgresProjectStore {
@@ -466,6 +484,54 @@ export class PostgresWikiChatStore implements WikiChatStoreContract {
   }
 }
 
+export class PostgresMCPTokenStore implements MCPTokenStoreContract {
+  constructor(private readonly pool = getPostgresPool()) {}
+
+  async createToken(input: {
+    projectId: string;
+    userId: string;
+    name: string;
+    tokenHash: string;
+    tokenPrefix: string;
+    scopes: string[];
+  }): Promise<MCPToken> {
+    const result = await this.pool.query(
+      `insert into mcp_tokens(id, project_id, user_id, name, token_hash, token_prefix, scopes)
+       values ($1,$2,$3,$4,$5,$6,$7)
+       returning *`,
+      [randomUUID(), input.projectId, input.userId, input.name, input.tokenHash, input.tokenPrefix, JSON.stringify(input.scopes)],
+    );
+    return rowToMCPToken(result.rows[0]);
+  }
+
+  async listTokens(input: { projectId: string; userId: string }): Promise<MCPToken[]> {
+    const result = await this.pool.query(
+      `select * from mcp_tokens
+       where project_id=$1 and user_id=$2
+       order by created_at desc`,
+      [input.projectId, input.userId],
+    );
+    return result.rows.map(rowToMCPToken);
+  }
+
+  async findTokenByHash(tokenHash: string): Promise<MCPTokenRecord | null> {
+    const result = await this.pool.query('select * from mcp_tokens where token_hash=$1 limit 1', [tokenHash]);
+    return result.rows[0] ? rowToMCPTokenRecord(result.rows[0]) : null;
+  }
+
+  async markTokenUsed(tokenId: string): Promise<void> {
+    await this.pool.query('update mcp_tokens set last_used_at=now() where id=$1', [tokenId]);
+  }
+
+  async revokeToken(input: { projectId: string; userId: string; tokenId: string }): Promise<void> {
+    await this.pool.query(
+      `update mcp_tokens set revoked_at=now()
+       where id=$1 and project_id=$2 and user_id=$3`,
+      [input.tokenId, input.projectId, input.userId],
+    );
+  }
+}
+
 function rowToProject(row: QueryResultRow): Project {
   return {
     id: row.id,
@@ -513,6 +579,27 @@ function rowToWikiChatMessage(row: QueryResultRow): WikiChatMessage {
     content: row.content,
     sources: row.sources ?? [],
     createdAt: new Date(row.created_at).toISOString(),
+  };
+}
+
+function rowToMCPToken(row: QueryResultRow): MCPToken {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    userId: row.user_id,
+    name: row.name,
+    tokenPrefix: row.token_prefix,
+    scopes: row.scopes ?? [],
+    createdAt: new Date(row.created_at).toISOString(),
+    lastUsedAt: row.last_used_at ? new Date(row.last_used_at).toISOString() : undefined,
+    revokedAt: row.revoked_at ? new Date(row.revoked_at).toISOString() : undefined,
+  };
+}
+
+function rowToMCPTokenRecord(row: QueryResultRow): MCPTokenRecord {
+  return {
+    ...rowToMCPToken(row),
+    tokenHash: row.token_hash,
   };
 }
 

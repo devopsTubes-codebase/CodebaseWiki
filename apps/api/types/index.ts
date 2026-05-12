@@ -411,6 +411,55 @@ export interface WikiChatStoreContract {
   }): Promise<WikiChatMessage>;
 }
 
+export interface MCPToken {
+  id: string;
+  projectId: string;
+  userId: string;
+  name: string;
+  tokenPrefix: string;
+  scopes: string[];
+  createdAt: string;
+  lastUsedAt?: string;
+  revokedAt?: string;
+}
+
+export interface MCPTokenRecord extends MCPToken {
+  tokenHash: string;
+}
+
+export interface MCPTokenCreateResult {
+  token: MCPToken;
+  plaintextToken: string;
+}
+
+export interface MCPTokenStoreContract {
+  createToken(input: {
+    projectId: string;
+    userId: string;
+    name: string;
+    tokenHash: string;
+    tokenPrefix: string;
+    scopes: string[];
+  }): Promise<MCPToken>;
+  listTokens(input: { projectId: string; userId: string }): Promise<MCPToken[]>;
+  findTokenByHash(tokenHash: string): Promise<MCPTokenRecord | null>;
+  markTokenUsed(tokenId: string): Promise<void>;
+  revokeToken(input: { projectId: string; userId: string; tokenId: string }): Promise<void>;
+}
+
+export type MCPToolName = 'search_docs' | 'ask_wiki' | 'get_page' | 'get_source_evidence';
+
+export interface MCPToolCallInput {
+  projectId: string;
+  tool: MCPToolName;
+  arguments: Record<string, unknown>;
+}
+
+export interface MCPToolCallResult {
+  content: Array<{ type: 'text'; text: string }>;
+  structuredContent?: unknown;
+}
+
 export type RegenerateTriggerSource = 'manual' | 'github-actions';
 
 export interface RegenerateDocsRequest {

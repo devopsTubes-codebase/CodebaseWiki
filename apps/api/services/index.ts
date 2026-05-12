@@ -5,6 +5,7 @@ export * from './project-intake';
 export * from './postgres';
 export * from './regenerate';
 export * from './job-logs';
+export * from './mcp';
 export * from './semantic-search';
 export * from './source-ingestion';
 export * from './storage';

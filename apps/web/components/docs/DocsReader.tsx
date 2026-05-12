@@ -1,6 +1,6 @@
 'use client';
 
-import { type FormEvent, useEffect, useRef, useState } from 'react';
+import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { AppShell } from '@/components/ui/AppShell';
 import { Callout } from '@/components/ui/Callout';
 import { GlassCard } from '@/components/ui/GlassCard';
@@ -255,6 +255,15 @@ type WikiChatMessage = {
   sources: Array<{ reference: string; excerpt: string; pageSlug?: string; title?: string }>;
 };
 
+type MCPToken = {
+  id: string;
+  name: string;
+  tokenPrefix: string;
+  createdAt: string;
+  lastUsedAt?: string;
+  revokedAt?: string;
+};
+
 function ChatMessageContent({ content }: { content: string }) {
   const lines = content.split('\n');
   const blocks: Array<{ type: 'paragraph'; text: string } | { type: 'list'; items: string[] }> = [];
@@ -424,6 +433,156 @@ function SearchDocsModal({
                   <HighlightedSearchExcerpt parts={result.highlightParts} />
                 </p>
               </a>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ConnectMCPModal({
+  projectId,
+  open,
+  onClose,
+}: {
+  projectId: string;
+  open: boolean;
+  onClose: () => void;
+}) {
+  const [tokens, setTokens] = useState<MCPToken[]>([]);
+  const [plaintextToken, setPlaintextToken] = useState('');
+  const [status, setStatus] = useState<'idle' | 'loading' | 'testing' | 'error' | 'success'>('idle');
+  const [message, setMessage] = useState('');
+  const endpoint = typeof window === 'undefined' ? '/api/mcp' : `${window.location.origin}/api/mcp`;
+  const configText = [
+    '{',
+    '  "mcpServers": {',
+    '    "codebase-wiki": {',
+    `      "url": "${endpoint}",`,
+    '      "headers": {',
+    `        "Authorization": "Bearer ${plaintextToken || '<create-token-first>'}"`,
+    '      },',
+    '      "projectId": "' + projectId + '"',
+    '    }',
+    '  }',
+    '}',
+  ].join('\n');
+
+  const loadTokens = useCallback(async () => {
+    setStatus('loading');
+    try {
+      const data = await fetchData<{ tokens: MCPToken[] }>(`/api/projects/${projectId}/mcp-tokens`);
+      setTokens(data.tokens);
+      setStatus('idle');
+    } catch (error) {
+      setStatus('error');
+      setMessage(error instanceof Error ? error.message : 'Failed to load MCP tokens');
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    if (!open) return;
+    void loadTokens();
+  }, [open, loadTokens]);
+
+  if (!open) return null;
+
+  async function createToken() {
+    setStatus('loading');
+    setMessage('');
+    try {
+      const data = await fetchData<{ token: MCPToken; plaintextToken: string }>(`/api/projects/${projectId}/mcp-tokens`, {
+        method: 'POST',
+        body: JSON.stringify({ name: 'Coding agent' }),
+      });
+      setPlaintextToken(data.plaintextToken);
+      setTokens((current) => [data.token, ...current]);
+      setStatus('success');
+      setMessage('MCP token created. Copy it now; it will not be shown again.');
+    } catch (error) {
+      setStatus('error');
+      setMessage(error instanceof Error ? error.message : 'Failed to create MCP token');
+    }
+  }
+
+  async function testConnection(token = plaintextToken) {
+    if (!token) {
+      setStatus('error');
+      setMessage('Create a token before testing the MCP connection.');
+      return;
+    }
+    setStatus('testing');
+    try {
+      await fetchData(`/api/mcp`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}` },
+        body: JSON.stringify({ tool: 'search_docs', arguments: { projectId, query: 'overview', maxResults: 1 } }),
+      });
+      setStatus('success');
+      setMessage('MCP test connection succeeded.');
+      await loadTokens();
+    } catch (error) {
+      setStatus('error');
+      setMessage(error instanceof Error ? error.message : 'MCP test connection failed');
+    }
+  }
+
+  async function revokeToken(tokenId: string) {
+    setStatus('loading');
+    await fetchData(`/api/projects/${projectId}/mcp-tokens/${tokenId}`, { method: 'DELETE' });
+    setTokens((current) => current.map((token) => (token.id === tokenId ? { ...token, revokedAt: new Date().toISOString() } : token)));
+    setStatus('success');
+    setMessage('MCP token revoked.');
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/70 px-4 py-10 backdrop-blur-sm" role="dialog" aria-modal="true">
+      <div className="mx-auto max-h-[88vh] max-w-3xl overflow-y-auto rounded-3xl border border-white/10 bg-[#07111d] p-6 shadow-2xl">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.18em] text-violet-200">Connect MCP</p>
+            <h2 className="mt-2 text-2xl font-semibold text-white">Use this wiki in your coding agent</h2>
+            <p className="mt-2 text-sm leading-6 text-slate-400">Create a project-scoped read-only token, copy the config, then test the connection.</p>
+          </div>
+          <button onClick={onClose} className="rounded-lg px-3 py-2 text-sm text-slate-400 hover:bg-white/5 hover:text-white">Close</button>
+        </div>
+
+        <div className="mt-6 grid gap-3 sm:grid-cols-4">
+          {['search_docs', 'ask_wiki', 'get_page', 'get_source_evidence'].map((tool) => (
+            <div key={tool} className="rounded-xl border border-white/10 bg-white/[0.03] p-3 font-mono text-xs text-violet-100">{tool}</div>
+          ))}
+        </div>
+
+        <div className="mt-6 flex flex-wrap gap-3">
+          <GradientButton onClick={createToken} disabled={status === 'loading'} className="h-10 px-4 text-sm">Create MCP token</GradientButton>
+          <GradientButton onClick={() => testConnection()} disabled={status === 'testing' || !plaintextToken} variant="secondary" className="h-10 px-4 text-sm">Test connection</GradientButton>
+        </div>
+        {message ? <p className={cn('mt-3 text-sm', status === 'error' ? 'text-red-300' : 'text-emerald-300')}>{message}</p> : null}
+
+        <div className="mt-6 rounded-2xl border border-white/10 bg-black/30 p-4">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm font-semibold text-white">MCP client config</p>
+            <button onClick={() => navigator.clipboard.writeText(configText)} className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-slate-300 hover:bg-white/5">Copy config</button>
+          </div>
+          <p className="mt-2 text-xs text-amber-200/80">Treat the token like a password. It is only shown once.</p>
+          <pre className="mt-3 overflow-x-auto whitespace-pre-wrap rounded-xl bg-[#050912] p-3 text-xs leading-5 text-slate-300">{configText}</pre>
+        </div>
+
+        <div className="mt-6">
+          <p className="text-sm font-semibold text-white">Active tokens</p>
+          <div className="mt-3 space-y-2">
+            {tokens.length === 0 ? <p className="text-sm text-slate-500">No MCP tokens yet.</p> : null}
+            {tokens.map((token) => (
+              <div key={token.id} className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                <div>
+                  <p className="text-sm text-white">{token.name} <span className="text-slate-500">({token.tokenPrefix}...)</span></p>
+                  <p className="mt-1 text-xs text-slate-500">{token.revokedAt ? 'Revoked' : token.lastUsedAt ? `Last used ${new Date(token.lastUsedAt).toLocaleString()}` : 'Not used yet'}</p>
+                </div>
+                <button onClick={() => revokeToken(token.id)} disabled={Boolean(token.revokedAt)} className="rounded-lg border border-white/10 px-3 py-2 text-xs text-slate-300 hover:bg-white/5 disabled:opacity-40">
+                  Revoke
+                </button>
+              </div>
             ))}
           </div>
         </div>
@@ -709,6 +868,7 @@ function AskWikiPanel({ projectId }: { projectId: string }) {
 
 export function DocsReader({ model }: { model?: DocsReaderModel }) {
   const [searchOpen, setSearchOpen] = useState(false);
+  const [mcpOpen, setMcpOpen] = useState(false);
   const readerModel: DocsReaderModel = model ?? {
     projectId: 'project-alpha',
     projectName: docsArticle.projectName,
@@ -740,10 +900,14 @@ export function DocsReader({ model }: { model?: DocsReaderModel }) {
           <GradientButton variant="ask" leadingIcon={<SparkIcon />} className="hidden h-11 px-8 xl:inline-flex">
             Ask Wiki
           </GradientButton>
+          <GradientButton onClick={() => setMcpOpen(true)} variant="secondary" className="hidden h-11 px-6 xl:inline-flex">
+            Connect MCP
+          </GradientButton>
         </>
       }
     >
       <SearchDocsModal projectId={readerModel.projectId} open={searchOpen} onClose={() => setSearchOpen(false)} />
+      <ConnectMCPModal projectId={readerModel.projectId} open={mcpOpen} onClose={() => setMcpOpen(false)} />
       <div className="flex min-h-[calc(100vh-64px)]">
         <DocsSidebar model={readerModel} />
         <main className="min-w-0 flex-1">

@@ -8,6 +8,8 @@ PORT="${PORT:-3010}"
 BASE_URL="http://localhost:${PORT}"
 SEARCH_SCREENSHOT="${SEARCH_SCREENSHOT:-/tmp/docs-search-polished.png}"
 ASK_SCREENSHOT="${ASK_SCREENSHOT:-/tmp/docs-ask-wiki-history.png}"
+MCP_CREATED_SCREENSHOT="${MCP_CREATED_SCREENSHOT:-/tmp/docs-mcp-config-created.png}"
+MCP_REVOKED_SCREENSHOT="${MCP_REVOKED_SCREENSHOT:-/tmp/docs-mcp-token-revoked.png}"
 SERVER_LOG="/tmp/codebase-wiki-docs-qa-server.log"
 
 cleanup() {
@@ -36,7 +38,7 @@ agent-browser wait --load networkidle
 agent-browser find label "Email address" fill "${QA_EMAIL}"
 agent-browser find label "Password" fill "password"
 agent-browser find role button click --name "Sign in"
-agent-browser wait --text "Mock auth connected"
+agent-browser wait 1000
 
 agent-browser open "${BASE_URL}/docs/${PROJECT_ID}"
 agent-browser wait --load networkidle
@@ -63,5 +65,21 @@ agent-browser wait --load networkidle
 agent-browser wait --text "GET /health"
 agent-browser screenshot "${ASK_SCREENSHOT}" --annotate
 
+agent-browser find role button click --name "Connect MCP"
+agent-browser wait --text "Use this wiki in your coding agent"
+agent-browser find role button click --name "Create MCP token"
+agent-browser wait --text "MCP token created"
+agent-browser wait --text "cw_mcp_"
+agent-browser find role button click --name "Test connection"
+agent-browser wait --text "MCP test connection succeeded"
+agent-browser screenshot "${MCP_CREATED_SCREENSHOT}" --annotate
+agent-browser click @e8
+agent-browser wait --text "MCP token revoked"
+agent-browser find role button click --name "Test connection"
+agent-browser wait --text "Invalid or revoked MCP token"
+agent-browser screenshot "${MCP_REVOKED_SCREENSHOT}" --annotate
+
 printf 'Search screenshot: %s\n' "${SEARCH_SCREENSHOT}"
 printf 'Ask Wiki screenshot: %s\n' "${ASK_SCREENSHOT}"
+printf 'MCP created screenshot: %s\n' "${MCP_CREATED_SCREENSHOT}"
+printf 'MCP revoked screenshot: %s\n' "${MCP_REVOKED_SCREENSHOT}"

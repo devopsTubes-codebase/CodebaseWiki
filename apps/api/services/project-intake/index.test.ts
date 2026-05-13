@@ -113,4 +113,28 @@ describe('project-intake validation and PAT storage', () => {
     expect(project.status).toBe('queued');
     expect(project.ownership.ownerUserId).toBe('user-2');
   });
+
+  it('reuses an existing project when the same github repository is imported again', () => {
+    const first = createProjectForUser(
+      { userId: 'user-reuse' },
+      {
+        name: 'sixth-proxy',
+        sourceType: 'github',
+        sourceInput: 'https://github.com/hshinosa/sixth-proxy',
+      },
+    );
+
+    const second = createProjectForUser(
+      { userId: 'user-reuse' },
+      {
+        name: 'sixth-proxy',
+        sourceType: 'github',
+        sourceInput: 'https://github.com/hshinosa/sixth-proxy.git/',
+      },
+    );
+
+    expect(second.id).toBe(first.id);
+    expect(second.status).toBe('queued');
+    expect(listProjectsForUser({ userId: 'user-reuse' })).toHaveLength(1);
+  });
 });

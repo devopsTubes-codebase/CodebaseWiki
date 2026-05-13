@@ -9,7 +9,7 @@ import {
 } from 'node:crypto';
 
 import { getBackendConfig } from '../../config';
-import { InvalidGitHubRepositoryUrlError, InvalidPATError, InvalidZipUploadError } from '../../utils';
+import { InvalidGitHubRepositoryUrlError, InvalidPATError, InvalidZipUploadError, normalizeProjectSourceKey } from '../../utils';
 import type {
   CreateProjectInput,
   DeleteUserPATInput,
@@ -236,10 +236,54 @@ export async function deleteStoredPATForUser(input: DeleteUserPATInput): Promise
   return true;
 }
 
+function collapseDuplicateProjects(projects: Project[]): Project[] {
+  const seenSourceKeys = new Set<string>();
+
+  return [...projects]
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    .filter((project) => {
+      const sourceKey = normalizeProjectSourceKey(project.sourceType, project.sourceInput);
+      if (!sourceKey) {
+        return true;
+      }
+
+      if (seenSourceKeys.has(sourceKey)) {
+        return false;
+      }
+
+      seenSourceKeys.add(sourceKey);
+      return true;
+    });
+}
+
 export function createProjectForUser(identity: SessionIdentity, input: CreateProjectInput): Project {
   assertValidProjectInput(input);
 
   const now = new Date().toISOString();
+  const normalizedSourceKey = normalizeProjectSourceKey(input.sourceType, input.sourceInput);
+  const currentProjects = projectsByUser.get(identity.userId) ?? [];
+
+  if (normalizedSourceKey) {
+    const matchingProjects = currentProjects.filter(
+      (project) => normalizeProjectSourceKey(project.sourceType, project.sourceInput) === normalizedSourceKey,
+    );
+
+    if (matchingProjects.length > 0) {
+      const canonicalProject = [...matchingProjects].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
+      canonicalProject.name = input.name.trim();
+      canonicalProject.sourceInput = input.sourceInput.trim();
+      canonicalProject.status = 'queued';
+      canonicalProject.updatedAt = now;
+
+      const dedupedProjects = currentProjects.filter(
+        (project) => project.id === canonicalProject.id || normalizeProjectSourceKey(project.sourceType, project.sourceInput) !== normalizedSourceKey,
+      );
+      projectsByUser.set(identity.userId, dedupedProjects);
+
+      return canonicalProject;
+    }
+  }
+
   const project: Project = {
     id: randomUUID(),
     userId: identity.userId,
@@ -255,7 +299,6 @@ export function createProjectForUser(identity: SessionIdentity, input: CreatePro
     updatedAt: now,
   };
 
-  const currentProjects = projectsByUser.get(identity.userId) ?? [];
   currentProjects.push(project);
   projectsByUser.set(identity.userId, currentProjects);
 
@@ -263,5 +306,8 @@ export function createProjectForUser(identity: SessionIdentity, input: CreatePro
 }
 
 export function listProjectsForUser(identity: SessionIdentity): Project[] {
-  return projectsByUser.get(identity.userId) ?? [];
+  const projects = projectsByUser.get(identity.userId) ?? [];
+  const dedupedProjects = collapseDuplicateProjects(projects);
+  projectsByUser.set(identity.userId, dedupedProjects);
+  return dedupedProjects;
 }

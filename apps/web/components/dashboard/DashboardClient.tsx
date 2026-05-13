@@ -1,19 +1,19 @@
 'use client';
-
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components/ui/AppShell';
 import { GlassCard } from '@/components/ui/GlassCard';
 import { GradientButton } from '@/components/ui/GradientButton';
 import { cn } from '@/components/ui/cn';
 import {
-  dashboardProjects,
   generationProgress,
   importMethods,
   type DashboardProject,
   type GenerationProgress,
   type ImportMethod,
+  type ProjectStatus,
 } from './dashboardData';
+import { classifyProjectsResponse } from './dashboardAuthView';
 import { deriveGenerationView, type UiJobLog } from './jobLogView';
 
 function SearchIcon() {
@@ -25,95 +25,146 @@ function SearchIcon() {
   );
 }
 
-function EmptyCodebaseIllustration() {
-  return (
-    <div
-      aria-hidden="true"
-      className="pointer-events-none absolute left-1/2 top-1/2 h-[430px] w-[680px] -translate-x-1/2 -translate-y-1/2 opacity-35"
-    >
-      <div className="absolute inset-0 rounded-full bg-[radial-gradient(circle_at_center,rgba(37,99,235,0.18),rgba(8,15,23,0)_66%)] blur-2xl" />
-      <div className="absolute left-[72px] top-[146px] h-px w-72 -rotate-[32deg] bg-cyan-300/15 shadow-[0_18px_0_rgba(103,232,249,0.10),0_36px_0_rgba(103,232,249,0.08)]" />
-      <div className="absolute left-[150px] top-[282px] h-px w-80 -rotate-[28deg] bg-cyan-300/15 shadow-[0_-18px_0_rgba(103,232,249,0.10),0_18px_0_rgba(103,232,249,0.08)]" />
-      <div className="absolute left-[250px] top-[96px] h-64 w-64 rotate-[30deg] rounded-2xl border border-cyan-200/10 bg-slate-800/35 shadow-[0_0_42px_rgba(56,189,248,0.12)]" />
-      <div className="absolute left-[281px] top-[130px] h-48 w-48 rotate-[30deg] rounded-xl border border-slate-500/15 bg-slate-900/45" />
-      <div className="absolute left-[324px] top-[184px] rotate-[30deg] text-2xl font-black tracking-widest text-slate-300/20">
-        CODEBASE
-      </div>
-      <div className="absolute left-[442px] top-[210px] h-[156px] w-32 -skew-y-[18deg] rounded-[28px] border border-slate-500/10 bg-slate-300/12" />
-      <div className="absolute left-[494px] top-[226px] h-[204px] w-32 -skew-y-[18deg] rounded-[30px] border border-slate-500/10 bg-slate-300/16" />
-      <div className="absolute left-[535px] top-[248px] h-[210px] w-36 -skew-y-[18deg] rounded-[34px] border border-slate-400/10 bg-slate-200/18" />
-      <div className="absolute left-[568px] top-[312px] h-2 w-20 -skew-y-[18deg] rounded-full bg-slate-700/25 shadow-[0_20px_0_rgba(51,65,85,0.18),0_40px_0_rgba(51,65,85,0.14)]" />
-      <div className="absolute left-[126px] top-[286px] h-0 w-0 border-b-[58px] border-l-[34px] border-r-[34px] border-b-indigo-400/12 border-l-transparent border-r-transparent" />
-      <div className="absolute bottom-[72px] left-[205px] h-12 w-16 rotate-[28deg] rounded-xl border border-cyan-200/10 bg-slate-700/20" />
-      <div className="absolute bottom-[115px] right-[68px] h-7 w-7 rotate-45 rounded-md border border-cyan-200/10 bg-slate-600/15" />
-    </div>
-  );
+type ImportSource = ImportMethod['id'];
+
+function deriveProjectNameFromRepositoryUrl(repositoryUrl: string): string {
+  const trimmed = repositoryUrl.trim().replace(/\/+$/, '').replace(/\.git$/, '');
+  return trimmed.split('/').filter(Boolean).at(-1) || 'GitHub Project';
 }
 
-function ImportMethodCard({ method }: { method: ImportMethod }) {
-  const icon = method.id === 'zip-file' ? 'ZIP' : 'GH';
+function ImportProjectDashboard({ source }: { source: ImportSource }) {
+  const router = useRouter();
+  const selectedMethod = importMethods.find((method) => method.id === source) ?? importMethods[1];
+  const [repositoryUrl, setRepositoryUrl] = useState('');
+  const [providedPAT, setProvidedPAT] = useState('');
+  const [zipFileName, setZipFileName] = useState('');
+  const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
+  const isZip = source === 'zip-file';
+  const isGitHubActions = source === 'github-actions';
 
-  return (
-    <GlassCard className="flex min-h-[310px] flex-col p-6">
-      <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-xs font-bold tracking-[0.16em] text-[#d8dbff]">
-        {icon}
-      </div>
-      <h3 className="mt-8 text-2xl font-semibold tracking-[-0.03em] text-white">{method.title}</h3>
-      <p className="mt-4 flex-1 text-base leading-6 text-[#a1a1aa]">{method.description}</p>
-      <a
-        href={method.href}
-        className="mt-6 inline-flex w-fit rounded-lg bg-gradient-to-r from-[#7b82ff] to-[#6618d8] px-6 py-2.5 text-sm font-semibold text-white shadow-[0_18px_34px_rgba(93,33,216,0.24)] transition hover:-translate-y-0.5"
-      >
-        {method.actionLabel}
-      </a>
-    </GlassCard>
-  );
-}
+  async function submitImport(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (submittingRef.current) return;
+    setError('');
 
-function UploadMethodPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
-  if (!open) return null;
+    if (isZip) {
+      setError('ZIP upload UI is visible, but the production ZIP upload endpoint is not wired yet. Use Git URL for this deploy smoke test.');
+      return;
+    }
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#020617]/70 px-6 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="upload-method-title">
-      <GlassCard className="relative w-full max-w-5xl border-white/15 bg-[#0a0f18]/95 p-8">
-        <button
-          type="button"
-          onClick={onClose}
-          className="absolute right-5 top-5 rounded-lg px-3 py-2 text-sm text-slate-400 transition hover:bg-white/5 hover:text-white"
-          aria-label="Close upload method panel"
-        >
-          Close
-        </button>
-        <h2 id="upload-method-title" className="text-center text-[36px] font-bold tracking-[-0.04em] text-white">
-          Choose Your Method
-        </h2>
-        <div className="mt-12 grid gap-6 md:grid-cols-3">
-          {importMethods.map((method) => (
-            <ImportMethodCard key={method.id} method={method} />
-          ))}
-        </div>
-      </GlassCard>
-    </div>
-  );
-}
+    const sourceInput = repositoryUrl.trim();
+    if (!sourceInput) {
+      setError('Paste a repository URL first.');
+      return;
+    }
+    const derivedName = deriveProjectNameFromRepositoryUrl(sourceInput);
 
-function EmptyDashboard() {
-  const [panelOpen, setPanelOpen] = useState(false);
+    submittingRef.current = true;
+    setSubmitting(true);
+    try {
+      const response = await fetch('/api/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: derivedName,
+          sourceType: 'github',
+          sourceInput,
+        }),
+      });
+
+      if (response.status === 401) {
+        router.push('/auth/sign-in?callbackUrl=/dashboard');
+        return;
+      }
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as { error?: { code?: string; message?: string } } | null;
+        const code = payload?.error?.code ?? `HTTP_${response.status}`;
+        const message = payload?.error?.message ?? 'Could not create project from this repository.';
+        throw new Error(`${code}: ${message}`);
+      }
+
+      const payload = (await response.json()) as { data: { id: string } };
+      const trimmedPAT = providedPAT.trim();
+      if (trimmedPAT) {
+        window.sessionStorage.setItem(`codebase-wiki:providedPAT:${payload.data.id}`, trimmedPAT);
+      }
+      router.push(`/dashboard/generating?projectId=${encodeURIComponent(payload.data.id)}`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not start import.');
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
+    }
+  }
 
   return (
     <AppShell>
-      <section className="relative isolate flex min-h-[calc(100vh-64px)] items-center justify-center overflow-hidden px-6">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(15,23,42,0.46),rgba(8,15,23,0.86)_52%,#080f17_78%)]" />
-        <EmptyCodebaseIllustration />
-        <div className="relative z-10 flex -translate-y-7 flex-col items-center text-center">
-          <p className="mb-7 text-[36px] font-bold leading-none tracking-[-0.045em] text-slate-200 drop-shadow-[0_2px_12px_rgba(2,6,23,0.7)]">
-            Not Project Found
+      <section className="min-h-[calc(100vh-64px)] px-6 py-24">
+        <GlassCard className="mx-auto max-w-3xl p-8 md:p-12" insetGlow>
+          <button type="button" onClick={() => router.push('/dashboard')} className="text-sm font-semibold text-slate-400 transition hover:text-white">
+            ← Choose another method
+          </button>
+          <p className="mt-8 text-xs font-bold uppercase tracking-[0.18em] text-violet-200">{selectedMethod.title}</p>
+          <h1 className="mt-3 text-[40px] font-bold tracking-[-0.04em] text-white">Import project</h1>
+          <p className="mt-3 text-base leading-7 text-[#a1a1aa]">
+            {isGitHubActions
+              ? 'Start with a repository URL now; GitHub Actions automation can be connected after the project exists.'
+              : selectedMethod.description}
           </p>
-          <GradientButton onClick={() => setPanelOpen(true)} className="px-10 py-[14px] font-bold">
-            Upload Project
-          </GradientButton>
-        </div>
-        <UploadMethodPanel open={panelOpen} onClose={() => setPanelOpen(false)} />
+
+          <form onSubmit={submitImport} className="mt-8 space-y-5">
+            {isZip ? (
+              <label className="block">
+                <span className="text-sm font-semibold text-slate-200">ZIP file</span>
+                <input
+                  type="file"
+                  accept=".zip,application/zip"
+                  onChange={(event) => setZipFileName(event.target.files?.[0]?.name ?? '')}
+                  className="mt-2 block w-full rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-slate-300 file:mr-4 file:rounded-lg file:border-0 file:bg-violet-500/20 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-violet-100"
+                />
+                {zipFileName ? <p className="mt-2 text-xs text-slate-500">Selected: {zipFileName}</p> : null}
+              </label>
+            ) : (
+              <>
+                <label className="block">
+                  <span className="text-sm font-semibold text-slate-200">Repository URL</span>
+                  <input
+                    value={repositoryUrl}
+                    onChange={(event) => setRepositoryUrl(event.target.value)}
+                    placeholder="https://github.com/owner/repository"
+                    className="mt-2 h-12 w-full rounded-xl border border-white/10 bg-black/20 px-4 font-mono text-sm text-white outline-none placeholder:text-slate-500 focus:border-violet-300/60"
+                  />
+                  <p className="mt-2 text-xs text-slate-500">
+                    Project name will be inferred as: {repositoryUrl.trim() ? deriveProjectNameFromRepositoryUrl(repositoryUrl) : 'repository-name'}
+                  </p>
+                </label>
+                <label className="block">
+                  <span className="text-sm font-semibold text-slate-200">GitHub Personal Access Token</span>
+                  <input
+                    value={providedPAT}
+                    onChange={(event) => setProvidedPAT(event.target.value)}
+                    type="text"
+                    name="github-access-token"
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder="Optional for private repositories"
+                    className="mt-2 h-12 w-full rounded-xl border border-white/10 bg-black/20 px-4 font-mono text-sm text-white outline-none placeholder:text-slate-500 focus:border-violet-300/60"
+                  />
+                  <p className="mt-2 text-xs text-slate-500">Stored only in this browser session long enough to start the clone job.</p>
+                </label>
+              </>
+            )}
+
+            {error ? <p className="rounded-xl border border-red-300/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">{error}</p> : null}
+
+            <GradientButton type="submit" disabled={submitting} className="w-full justify-center py-3 font-bold">
+              {submitting ? 'Starting import...' : isZip ? 'Check ZIP upload' : 'Start import'}
+            </GradientButton>
+          </form>
+        </GlassCard>
       </section>
     </AppShell>
   );
@@ -166,9 +217,11 @@ function ProjectCard({ project }: { project: DashboardProject }) {
 }
 
 function AddProjectCard() {
+  const router = useRouter();
   return (
     <button
       type="button"
+      onClick={() => router.push('/dashboard?source=git-url')}
       className="group min-h-[337px] rounded-2xl border border-dashed border-violet-300/35 bg-[radial-gradient(circle_at_center,rgba(123,130,255,0.16),rgba(24,24,27,0.28)_62%)] p-6 text-center transition hover:-translate-y-1 hover:border-violet-200/60"
     >
       <span className="mx-auto mt-14 flex h-16 w-16 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-3xl text-[#d8dbff] transition group-hover:bg-white/10">
@@ -176,18 +229,83 @@ function AddProjectCard() {
       </span>
       <span className="mt-8 block text-2xl font-semibold tracking-[-0.03em] text-white">Add New Project</span>
       <span className="mx-auto mt-4 block max-w-[220px] text-base leading-6 text-[#a1a1aa]">
-        Import another repository, Git URL, or ZIP file.
+        Import another repository and generate new docs
       </span>
     </button>
   );
 }
 
-function ProjectListDashboard({ projects = dashboardProjects }: { projects?: DashboardProject[] }) {
+function mapApiProjectToDashboard(project: { id: string; name: string; sourceInput: string; sourceType?: string; status: string; updatedAt: string }): DashboardProject {
+  const statusMap: Record<string, ProjectStatus> = {
+    completed: 'ready',
+    queued: 'syncing',
+    uploading: 'syncing',
+    cloning: 'syncing',
+    extracting: 'syncing',
+    scanning: 'syncing',
+    generating: 'syncing',
+    failed: 'ready',
+  };
+  const derivedTags = project.sourceType === 'github' || project.sourceInput.toLowerCase().includes('github.com') ? ['GitHub'] : ['Upload'];
+  const relativeTime = formatRelativeTime(project.updatedAt);
+
+  return {
+    id: project.id,
+    name: project.name,
+    description: project.sourceInput,
+    status: statusMap[project.status] ?? 'ready',
+    tags: derivedTags,
+    updatedAt: relativeTime,
+    docsHref: `/docs/${encodeURIComponent(project.id)}`,
+  };
+}
+
+function formatRelativeTime(isoDate: string): string {
+  const diff = Date.now() - new Date(isoDate).getTime();
+  const minutes = Math.floor(diff / 60_000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+function ProjectListDashboard() {
+  const router = useRouter();
   const [query, setQuery] = useState('');
+  const [projects, setProjects] = useState<DashboardProject[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState('');
+
+  useEffect(() => {
+    let disposed = false;
+    async function load() {
+      try {
+        const response = await fetch('/api/projects', { cache: 'no-store' });
+        const handling = classifyProjectsResponse(response.status);
+        if (handling.kind === 'redirect') {
+          router.push(handling.target);
+          return;
+        }
+        if (handling.kind === 'error') {
+          throw new Error(handling.message);
+        }
+        const payload = (await response.json()) as { data: Array<{ id: string; name: string; sourceInput: string; sourceType?: string; status: string; updatedAt: string }> };
+        if (!disposed) setProjects(payload.data.map(mapApiProjectToDashboard));
+      } catch {
+        if (!disposed) setFetchError('Could not load projects.');
+      } finally {
+        if (!disposed) setLoading(false);
+      }
+    }
+    void load();
+    return () => { disposed = true; };
+  }, [router]);
+
   const filteredProjects = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
     if (!normalizedQuery) return projects;
-
     return projects.filter((project) =>
       [project.name, project.description, ...project.tags].some((value) => value.toLowerCase().includes(normalizedQuery))
     );
@@ -217,6 +335,23 @@ function ProjectListDashboard({ projects = dashboardProjects }: { projects?: Das
               />
             </label>
           </div>
+
+          {loading ? (
+            <div className="mt-12 flex flex-col items-center gap-4 py-16">
+              <div className="h-8 w-8 animate-spin rounded-full border-2 border-violet-300/30 border-t-violet-300" />
+              <p className="text-sm text-slate-400">Loading projects...</p>
+            </div>
+          ) : fetchError ? (
+            <div className="mt-12 py-16 text-center">
+              <p className="text-sm text-red-400">{fetchError}</p>
+            </div>
+          ) : filteredProjects.length === 0 && !query ? (
+            <div className="mt-12 flex flex-col items-center gap-4 py-16">
+              <p className="text-lg text-slate-400">No projects yet</p>
+              <p className="text-sm text-slate-500">Import a repository to get started</p>
+            </div>
+          ) : null}
+
           <div className="mt-8 grid gap-6 md:grid-cols-3">
             {filteredProjects.map((project) => (
               <ProjectCard key={project.id} project={project} />
@@ -333,10 +468,15 @@ function useProjectJobLogs(projectId?: string) {
       if (!disposed && !pollTimer) startPolling();
     };
 
+    const providedPAT = typeof window === 'undefined' ? '' : window.sessionStorage.getItem(`codebase-wiki:providedPAT:${projectId}`) ?? '';
+    if (providedPAT) {
+      window.sessionStorage.removeItem(`codebase-wiki:providedPAT:${projectId}`);
+    }
+
     void fetch(`/api/projects/${projectId}/regenerate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
+      body: JSON.stringify(providedPAT ? { providedPAT } : {}),
     })
       .catch(() => setConnectionState('error'))
       .finally(() => {
@@ -355,6 +495,7 @@ function useProjectJobLogs(projectId?: string) {
 }
 
 export function GeneratingDashboard({ progress = generationProgress, projectId }: { progress?: GenerationProgress; projectId?: string }) {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const effectiveProjectId = projectId ?? searchParams.get('projectId') ?? undefined;
   const { logs, connectionState } = useProjectJobLogs(effectiveProjectId);
@@ -372,6 +513,14 @@ export function GeneratingDashboard({ progress = generationProgress, projectId }
       statusLabel: liveView.statusLabel,
     }
     : { ...progress, statusLabel: 'Running analysis' };
+
+  useEffect(() => {
+    if (!effectiveProjectId || liveView.statusLabel !== 'Completed') return;
+    const redirectTimer = window.setTimeout(() => {
+      router.push(`/docs/${encodeURIComponent(effectiveProjectId)}`);
+    }, 900);
+    return () => window.clearTimeout(redirectTimer);
+  }, [effectiveProjectId, liveView.statusLabel, router]);
 
   return (
     <AppShell>
@@ -395,6 +544,15 @@ export function GeneratingDashboard({ progress = generationProgress, projectId }
                 <p className="text-sm uppercase tracking-[0.16em] text-slate-500">Project</p>
                 <p className="mt-1 font-mono text-lg font-semibold text-white">{displayed.projectName}</p>
                 <p className="mt-3 text-sm text-slate-400">{displayed.filesScanned} files · {displayed.elapsed}</p>
+                {effectiveProjectId && displayed.statusLabel === 'Completed' ? (
+                  <button
+                    type="button"
+                    onClick={() => router.push(`/docs/${encodeURIComponent(effectiveProjectId)}`)}
+                    className="mt-4 rounded-lg bg-gradient-to-r from-[#7b82ff] to-[#6618d8] px-4 py-2 text-sm font-semibold text-white transition hover:-translate-y-0.5"
+                  >
+                    Open generated docs
+                  </button>
+                ) : null}
               </div>
             </GlassCard>
           </div>
@@ -479,10 +637,10 @@ export function GeneratingDashboard({ progress = generationProgress, projectId }
   );
 }
 
-export function DashboardClient({ mode = 'empty' }: { mode?: 'empty' | 'projects' }) {
-  if (mode === 'projects') {
-    return <ProjectListDashboard />;
+export function DashboardClient({ source }: { mode?: 'empty' | 'projects'; source?: ImportSource }) {
+  if (source) {
+    return <ImportProjectDashboard source={source} />;
   }
 
-  return <EmptyDashboard />;
+  return <ProjectListDashboard />;
 }

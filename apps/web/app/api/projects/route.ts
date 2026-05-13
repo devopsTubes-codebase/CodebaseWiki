@@ -71,9 +71,15 @@ export async function POST(request: Request) {
       return toUnauthorizedResponse();
     }
 
-    const response = error instanceof Error
-      ? toBackendErrorResponse(error, 'Failed to create project')
-      : toBackendErrorResponse(error, 'Failed to create project');
+    if (error instanceof Error) {
+      console.error('[projects:create] Failed to create project', {
+        name: error.name,
+        message: error.message,
+        code: 'code' in error ? (error as { code?: unknown }).code : undefined,
+      });
+    }
+
+    const response = toBackendErrorResponse(error, 'Failed to create project');
 
     return NextResponse.json(response.body, { status: response.status });
   }

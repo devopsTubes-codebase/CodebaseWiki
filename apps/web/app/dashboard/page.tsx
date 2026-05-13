@@ -2,10 +2,10 @@ import { DashboardClient } from '@/components/dashboard/DashboardClient';
 
 type DashboardPageProps = {
   searchParams?: {
-    state?: string;
+    source?: 'github-actions' | 'git-url' | 'zip-file';
   };
 };
 
 export default function DashboardPage({ searchParams }: DashboardPageProps) {
-  return <DashboardClient mode={searchParams?.state === 'projects' ? 'projects' : 'empty'} />;
+  return <DashboardClient source={searchParams?.source} />;
 }

@@ -33,22 +33,64 @@ import type {
   WikiChatStoreContract,
   WikiChatSession,
 } from '../../types';
+import { normalizeProjectSourceKey } from '../../utils';
 import { normalizeLogLimit, sanitizeJobLog } from '../job-logs';
 import { rankGroundedKnowledgeSources } from '../semantic-search';
 import { encryptText, decryptText } from './pat-crypto';
 
 let sharedPool: Pool | null = null;
+let schemaInitializationPromise: Promise<void> | null = null;
+
+export function buildPostgresPoolConfig(config = getBackendConfig()): ConstructorParameters<typeof Pool>[0] {
+  const connectionUrl = new URL(config.database.url);
+  connectionUrl.searchParams.delete('sslmode');
+  connectionUrl.searchParams.delete('sslrootcert');
+  connectionUrl.searchParams.delete('sslcert');
+  connectionUrl.searchParams.delete('sslkey');
+
+  const poolConfig: ConstructorParameters<typeof Pool>[0] = {
+    connectionString: connectionUrl.toString(),
+  };
+
+  if (config.database.sslEnabled) {
+    poolConfig.ssl = {
+      rejectUnauthorized: config.database.sslRejectUnauthorized,
+    };
+
+    if (config.database.sslRootCert) {
+      poolConfig.ssl.ca = config.database.sslRootCert;
+    }
+  }
+
+  return poolConfig;
+}
 
 export function getPostgresPool(): Pool {
   if (!sharedPool) {
-    sharedPool = new Pool({ connectionString: getBackendConfig().database.url });
+    sharedPool = new Pool(buildPostgresPoolConfig());
   }
 
   return sharedPool;
 }
 
 export async function initializePostgresSchema(pool = getPostgresPool()): Promise<void> {
-  await pool.query('create extension if not exists vector');
+  if (pool === sharedPool && schemaInitializationPromise) {
+    return schemaInitializationPromise;
+  }
+
+  const initialization = initializePostgresSchemaUnsafe(pool);
+  if (pool === sharedPool) {
+    schemaInitializationPromise = initialization.catch((error) => {
+      schemaInitializationPromise = null;
+      throw error;
+    });
+    return schemaInitializationPromise;
+  }
+
+  return initialization;
+}
+
+async function initializePostgresSchemaUnsafe(pool: Pool): Promise<void> {
   await pool.query(`
     create table if not exists projects (
       id text primary key,
@@ -92,18 +134,6 @@ export async function initializePostgresSchema(pool = getPostgresPool()): Promis
       payload jsonb not null,
       version integer not null,
       generated_at timestamptz not null
-    )
-  `);
-  await pool.query(`
-    create table if not exists vector_chunks (
-      id bigserial primary key,
-      project_id text not null references projects(id) on delete cascade,
-      chunk_id text not null,
-      text text not null,
-      embedding vector(3) not null,
-      metadata jsonb not null,
-      indexed_at timestamptz not null default now(),
-      unique(project_id, chunk_id)
     )
   `);
   await pool.query(`
@@ -157,13 +187,99 @@ export async function initializePostgresSchema(pool = getPostgresPool()): Promis
     )
   `);
   await pool.query('create index if not exists mcp_tokens_project_user_created_idx on mcp_tokens(project_id, user_id, created_at desc)');
+  await initializePostgresVectorSchema(pool);
+}
+
+async function initializePostgresVectorSchema(pool: Pool): Promise<void> {
+  try {
+    await pool.query('create extension if not exists vector');
+    await pool.query(`
+      create table if not exists vector_chunks (
+        id bigserial primary key,
+        project_id text not null references projects(id) on delete cascade,
+        chunk_id text not null,
+        text text not null,
+        embedding vector(3) not null,
+        metadata jsonb not null,
+        indexed_at timestamptz not null default now(),
+        unique(project_id, chunk_id)
+      )
+    `);
+  } catch (error) {
+    if (isOptionalPgVectorError(error)) {
+      console.warn('[postgres] pgvector is unavailable; vector search will be disabled', {
+        code: error.code,
+        message: error.message,
+      });
+      return;
+    }
+
+    throw error;
+  }
+}
+
+function isOptionalPgVectorError(error: unknown): error is Error & { code?: string } {
+  if (!(error instanceof Error)) return false;
+  const code = 'code' in error ? (error as { code?: unknown }).code : undefined;
+  return code === '0A000' || code === '42704' || /extension "vector" is not available|type "vector" does not exist/i.test(error.message);
 }
 
 export class PostgresProjectStore {
   constructor(private readonly pool = getPostgresPool()) {}
 
+  private async collapseDuplicateProjects(projects: Project[]): Promise<Project[]> {
+    const seenSourceKeys = new Set<string>();
+    const duplicateProjectIds: string[] = [];
+    const uniqueProjects: Project[] = [];
+
+    for (const project of projects) {
+      const sourceKey = normalizeProjectSourceKey(project.sourceType, project.sourceInput);
+
+      if (!sourceKey || !seenSourceKeys.has(sourceKey)) {
+        if (sourceKey) {
+          seenSourceKeys.add(sourceKey);
+        }
+        uniqueProjects.push(project);
+        continue;
+      }
+
+      duplicateProjectIds.push(project.id);
+    }
+
+    if (duplicateProjectIds.length > 0) {
+      await this.pool.query('delete from projects where id = any($1::text[])', [duplicateProjectIds]);
+    }
+
+    return uniqueProjects;
+  }
+
   async createProject(identity: SessionIdentity, input: CreateProjectInput): Promise<Project> {
     const now = new Date().toISOString();
+    const normalizedSourceKey = normalizeProjectSourceKey(input.sourceType, input.sourceInput);
+
+    if (normalizedSourceKey) {
+      const existingProjects = await this.listProjects(identity);
+      const matchingProjects = existingProjects.filter(
+        (project) => normalizeProjectSourceKey(project.sourceType, project.sourceInput) === normalizedSourceKey,
+      );
+
+      if (matchingProjects.length > 0) {
+        const canonicalProject = [...matchingProjects].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
+        const duplicateProjectIds = matchingProjects.filter((project) => project.id !== canonicalProject.id).map((project) => project.id);
+
+        if (duplicateProjectIds.length > 0) {
+          await this.pool.query('delete from projects where id = any($1::text[])', [duplicateProjectIds]);
+        }
+
+        const updatedProject = await this.pool.query(
+          'update projects set name=$2, source_input=$3, status=$4, updated_at=$5 where id=$1 returning *',
+          [canonicalProject.id, input.name.trim(), input.sourceInput.trim(), 'queued', now],
+        );
+
+        return rowToProject(updatedProject.rows[0]);
+      }
+    }
+
     const project: Project = {
       id: randomUUID(),
       userId: identity.userId,
@@ -197,8 +313,8 @@ export class PostgresProjectStore {
   }
 
   async listProjects(identity: SessionIdentity): Promise<Project[]> {
-    const result = await this.pool.query('select * from projects where user_id=$1 order by created_at desc', [identity.userId]);
-    return result.rows.map(rowToProject);
+    const result = await this.pool.query('select * from projects where user_id=$1 order by updated_at desc, created_at desc', [identity.userId]);
+    return this.collapseDuplicateProjects(result.rows.map(rowToProject));
   }
 
   async getProject(projectId: string): Promise<Project | null> {

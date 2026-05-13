@@ -123,4 +123,32 @@ describe('source-ingestion temp lifecycle', () => {
     expect(JSON.stringify(env.mock.calls)).toContain('GIT_ASKPASS');
     expect(JSON.stringify(env.mock.calls)).not.toContain('ghp_secret_token');
   });
+
+  it('fails early with a runtime error when git is unavailable', async () => {
+    const clone = jest.fn().mockRejectedValue(new Error('spawn git ENOENT'));
+    jest.mocked(simpleGit).mockReturnValue({ clone } as never);
+
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'codebase-wiki-clone-'));
+
+    await expect(
+      cloneGitHubRepositoryToTempStorage({
+        repositoryUrl: 'https://github.com/octocat/public-repo',
+        outputPath: path.join(tempDir, 'repo'),
+      }),
+    ).rejects.toThrow('Git is not installed in the runtime container');
+  });
+
+  it('fails early with a runtime error when CA certificates are unavailable', async () => {
+    const clone = jest.fn().mockRejectedValue(new Error('server certificate verification failed. CAfile: none CRLfile: none'));
+    jest.mocked(simpleGit).mockReturnValue({ clone } as never);
+
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'codebase-wiki-clone-'));
+
+    await expect(
+      cloneGitHubRepositoryToTempStorage({
+        repositoryUrl: 'https://github.com/octocat/public-repo',
+        outputPath: path.join(tempDir, 'repo'),
+      }),
+    ).rejects.toThrow('CA certificates are not installed in the runtime container');
+  });
 });

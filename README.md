@@ -70,3 +70,18 @@ Area coba-coba yang belum final.
 - Simpan keputusan produk dan arsitektur di `docs/`.
 - Simpan eksperimen cepat di `experiments/`.
 - Jangan mencampur dokumen final dengan trial cepat.
+
+## CI dan deploy
+
+- `push` dan `pull_request` menjalankan CI di `.github/workflows/ci.yml`.
+- `push` ke `main` atau `master` memicu deploy ke namespace `wiki-team` lewat `.github/workflows/deploy.yml`.
+- Secret runtime untuk deploy diambil dari GitHub Secrets, termasuk `DATABASE_URL`, `KUBE_CONFIG_DATA`, `OPENAI_API_KEY`, `NEXTAUTH_SECRET`, `ENCRYPTION_SECRET_KEY`, dan `DOCKERHUB_TOKEN`.
+
+## Deploy manual
+
+- Jalankan `scripts/manual-deploy.sh` untuk build image, push ke DockerHub, lalu apply ke cluster `wiki-team`.
+- Script otomatis membaca `.env.local`, `.env.deploy.local`, `wiki-team/db-credentials.txt`, `wiki-team/domain.txt`, dan `wiki-team/kubeconfig.yaml`.
+- Simpan secret deploy di `.env.deploy.local` supaya tidak ikut ke git; kamu bisa menyalin formatnya dari `.env.deploy.example`.
+- Username DockerHub default sekarang `hshinosa`; override hanya kalau memang perlu.
+- `DOCKERHUB_TOKEN` opsional kalau kamu belum login ke DockerHub di mesin ini; kalau sudah login, script akan pakai credential yang ada.
+- `IMAGE_TAG` bisa diisi kalau kamu tidak mau pakai `latest`.

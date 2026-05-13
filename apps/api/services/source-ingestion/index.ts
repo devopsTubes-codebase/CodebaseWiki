@@ -123,7 +123,13 @@ export async function cloneGitHubRepositoryToTempStorage(input: {
   try {
     const git = credentials ? simpleGit().env(credentials.env) : simpleGit();
     await git.clone(input.repositoryUrl, input.outputPath, ['--depth', '1']);
-  } catch {
+  } catch (error) {
+    if (isMissingGitRuntimeError(error)) {
+      throw new Error('Git is not installed in the runtime container');
+    }
+    if (isMissingCaCertificatesError(error)) {
+      throw new Error('CA certificates are not installed in the runtime container');
+    }
     throw new InaccessibleRepositoryError('Repository is not accessible with the provided or stored credentials');
   } finally {
     if (credentials) {
@@ -163,6 +169,16 @@ async function createGitAskPassEnvironment(pat: string): Promise<{ env: Record<s
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+function isMissingGitRuntimeError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return /spawn git ENOENT|git.*not found/i.test(error.message);
+}
+
+function isMissingCaCertificatesError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return /server certificate verification failed|CAfile:\s*none/i.test(error.message);
 }
 
 export function isCleanupExpired(cleanupAt: number, now = Date.now()): boolean {

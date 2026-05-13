@@ -1,6 +1,12 @@
+import fs from 'node:fs';
+import path from 'node:path';
+
 export interface BackendConfig {
   database: {
     url: string;
+    sslEnabled: boolean;
+    sslRejectUnauthorized: boolean;
+    sslRootCert: string;
   };
   ai: {
     provider: 'openai';
@@ -33,6 +39,26 @@ export interface BackendConfig {
   };
 }
 
+function loadRootEnvLocal(): void {
+  const envPath = path.resolve(process.cwd(), '..', '..', '.env.local');
+  if (!fs.existsSync(envPath)) return;
+
+  const lines = fs.readFileSync(envPath, 'utf8').split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const separatorIndex = trimmed.indexOf('=');
+    if (separatorIndex === -1) continue;
+    const key = trimmed.slice(0, separatorIndex).trim();
+    const value = trimmed.slice(separatorIndex + 1).trim();
+    if (key && process.env[key] === undefined) {
+      process.env[key] = value;
+    }
+  }
+}
+
+loadRootEnvLocal();
+
 function getEnv(name: string, fallback?: string): string {
   const value = process.env[name] ?? fallback;
 
@@ -64,9 +90,31 @@ function getOptionalEnv(name: string, fallback = ''): string {
   return value.trim();
 }
 
+function getBooleanEnv(name: string, fallback: boolean): boolean {
+  const rawValue = process.env[name];
+
+  if (!rawValue || rawValue.trim() === '') {
+    return fallback;
+  }
+
+  const normalized = rawValue.trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) {
+    return true;
+  }
+
+  if (['0', 'false', 'no', 'off'].includes(normalized)) {
+    return false;
+  }
+
+  throw new Error(`Environment variable ${name} must be a boolean`);
+}
+
 const config: BackendConfig = {
   database: {
     url: getEnv('DATABASE_URL', 'changeme_database_url'),
+    sslEnabled: getBooleanEnv('DATABASE_SSL_ENABLED', false),
+    sslRejectUnauthorized: getBooleanEnv('DATABASE_SSL_REJECT_UNAUTHORIZED', true),
+    sslRootCert: getOptionalEnv('DATABASE_SSL_ROOT_CERT'),
   },
   ai: {
     provider: 'openai',

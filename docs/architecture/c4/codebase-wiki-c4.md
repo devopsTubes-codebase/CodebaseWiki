@@ -20,7 +20,7 @@ Codebase Wiki adalah platform dokumentasi otomatis berbasis AI. User dapat sign 
 - **GitHub**: Sumber repository public/private dan integrasi GitHub Actions.
 - **GitHub Actions**: Trigger otomatis untuk regenerate dokumentasi ketika repository berubah.
 - **AI Provider**: OpenAI-compatible API untuk generate dokumentasi, embeddings, dan AI chat.
-- **NextAuth/Auth Provider**: Layanan autentikasi untuk Sign In / Sign Up.
+- **NextAuth/Auth.js (Email Only)**: Layanan autentikasi untuk Sign In / Sign Up menggunakan email (magic link / passwordless). Tidak mendukung OAuth provider seperti Google atau GitHub.
 
 ### Context Diagram
 
@@ -36,7 +36,7 @@ Person(pm, "Project Manager / Stakeholder", "Membaca gambaran project")
 System(codebaseWiki, "Codebase Wiki", "Generate dokumentasi project otomatis berbasis AI, search, Ask Wiki, MCP, dan job logs")
 System_Ext(github, "GitHub", "Public/private repositories dan GitHub Actions")
 System_Ext(aiProvider, "OpenAI-compatible AI Provider", "Generate docs, embeddings, and AI chat")
-System_Ext(authProvider, "NextAuth/Auth Provider", "Sign In / Sign Up")
+System_Ext(authProvider, "NextAuth/Auth.js (Email Only)", "Sign In / Sign Up via email")
 
 Rel(developer, codebaseWiki, "Menginput source project dan membaca wiki")
 Rel(newDev, codebaseWiki, "Membaca dokumentasi onboarding")
@@ -44,7 +44,7 @@ Rel(techLead, codebaseWiki, "Regenerate dokumentasi dari source terbaru")
 Rel(pm, codebaseWiki, "Melihat dokumentasi project")
 Rel(codebaseWiki, github, "Clones repository and reads repository metadata")
 Rel(codebaseWiki, aiProvider, "Sends compact code context and receives generated documentation/chat output")
-Rel(codebaseWiki, authProvider, "Authenticates users via sign in / sign up")
+Rel(codebaseWiki, authProvider, "Authenticates users via email (magic link / passwordless)")
 ```
 
 ## C2 - Container
@@ -89,7 +89,7 @@ title Codebase Wiki - Container Diagram
 Person(user, "User", "Developer, tech lead, PM, stakeholder")
 System_Ext(github, "GitHub", "Repository source dan GitHub Actions")
 System_Ext(aiProvider, "OpenAI-compatible AI Provider", "Documentation, embeddings, and chat")
-System_Ext(authProvider, "Auth Provider", "Authentication service")
+System_Ext(authProvider, "Auth Provider (Email Only)", "Authentication service - email magic link only")
 
 System_Boundary(system, "Codebase Wiki") {
   Container(web, "Web App", "Next.js / React", "Sign in, create project, input source, status, multi-page wiki, AI chat")
@@ -110,7 +110,7 @@ System_Boundary(system, "Codebase Wiki") {
 
 Rel(user, web, "Menggunakan")
 Rel(web, api, "Request upload/input repo/chat")
-Rel(api, authProvider, "Autentikasi via NextAuth")
+Rel(api, authProvider, "Autentikasi via NextAuth (email only)")
 Rel(api, authStore, "Simpan/ambil session metadata")
 Rel(api, worker, "Start ingestion job")
 Rel(worker, patStore, "Reads encrypted PAT per user")

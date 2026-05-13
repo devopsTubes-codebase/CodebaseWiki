@@ -79,7 +79,7 @@ Membantu tim developer mengotomatisasi proses pembuatan dan pemeliharaan dokumen
 
 Fokus utama hackathon:
 
-- Sign in dengan NextAuth/Auth.js.
+- Sign in dengan NextAuth/Auth.js menggunakan email (magic link / passwordless).
 - Create project.
 - Input source project dari ZIP atau GitHub repo + PAT jika private.
 - Scan project structure.
@@ -211,7 +211,7 @@ Sistem harus menampilkan pesan error yang jelas jika:
 Sistem sebaiknya menyediakan atau menyiapkan sample project agar demo hackathon dapat berjalan cepat dan stabil.
 
 **FR-012 — Authentication**  
-Sistem harus menyediakan Sign In/Sign Up menggunakan NextAuth/Auth.js agar project, PAT, dan generated docs dapat dikaitkan ke user.
+Sistem harus menyediakan Sign In/Sign Up menggunakan NextAuth/Auth.js dengan metode autentikasi email (magic link / passwordless) saja agar project, PAT, dan generated docs dapat dikaitkan ke user. Tidak mendukung OAuth provider seperti Google atau GitHub.
 
 **FR-013 — Multi Project Support**  
 Sistem dapat memungkinkan user memasukkan lebih dari satu project agar dokumentasi dapat dikelola per project.
@@ -284,7 +284,7 @@ Input GitHub URL atau upload ZIP sample project
 
 #### Tier 1 - Wajib Demo
 
-- Sign in.
+- Sign in (email only, NextAuth/Auth.js).
 - Create project.
 - Upload ZIP.
 - Input GitHub URL.
@@ -301,7 +301,7 @@ Input GitHub URL atau upload ZIP sample project
 - Markdown navigation.
 - Syntax highlighting.
 - Dark mode.
-- Sign In/Sign Up.
+- Sign In/Sign Up (email only, NextAuth/Auth.js).
 - Multi project support.
 - GitHub Actions integration.
 

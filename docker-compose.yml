@@ -1,0 +1,44 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+      - .env.local
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      NEXTAUTH_URL: https://codebasewiki.jmola.my.id
+      NEXTAUTH_SECRET: dev-secret
+      TEMP_STORAGE_PATH: /tmp/codebase-wiki
+      DOCS_STORAGE_PATH: /tmp/codebase-wiki-docs
+      VECTOR_INDEX_PATH: /tmp/codebase-wiki-index
+      DATABASE_URL: postgresql://codebase_wiki:codebase_wiki@postgres:5432/codebase_wiki
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: codebase_wiki
+      POSTGRES_PASSWORD: codebase_wiki
+      POSTGRES_DB: codebase_wiki
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U codebase_wiki -d codebase_wiki"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+volumes:
+  postgres-data:

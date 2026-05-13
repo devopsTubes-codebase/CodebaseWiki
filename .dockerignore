@@ -1,0 +1,13 @@
+node_modules
+npm-debug.log
+.git
+.next
+apps/web/.next
+coverage
+.env
+.env.*
+wiki-team
+.omd
+.playwright-mcp
+generated-images
+deploy/k8s/*.local.yaml

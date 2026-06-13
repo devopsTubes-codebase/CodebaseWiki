@@ -17,8 +17,11 @@ experiments/*-poc/
 deploy/
 scripts/manual-deploy.sh
 .env.deploy.example
+openspec/
+workflows/
+docs/
+experiments/
 .codegraph/
-docs/devops/
 .github/
 .dockerignore
 Dockerfile

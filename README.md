@@ -4,6 +4,9 @@ Platform auto-generate dokumentasi dari codebase berbasis AI agent. User submit 
 
 Mirip GitBook, tapi isinya ditulis oleh agent.
 
+> **Repository ini digunakan sebagai project aplikasi untuk Ujian Akhir Semester mata kuliah DevOps (CCK4IBB3).**
+> Implementasi DevOps (Docker, Kubernetes, CI/CD, monitoring) akan dilakukan secara terpisah di repository config tersendiri.
+
 ## Overview
 
 ```
@@ -34,7 +37,7 @@ Publish ke web docs
 ## Structure
 
 ```
-codebase-wiki/
+refactoryhackathon/
 ├── apps/
 │   ├── web/                     # Next.js 14 frontend + thin route handlers
 │   │   ├── app/
@@ -72,11 +75,7 @@ codebase-wiki/
 │       ├── types/                   # Shared TypeScript types
 │       ├── utils/                   # Backend contracts, errors, safe logging
 │       └── config.ts                # Backend configuration
-├── docs/                        # Project documentation
-│   ├── prd/                     # Product Requirement Document
-│   ├── architecture/            # C4 model, diagrams, ADR
-│   ├── content/                 # Content structure, templates, writing guidelines
-│   └── research/                # Competitor research & product references
+├── .env.example                 # Environment variables template
 └── package.json                 # Root workspace config
 ```
 
@@ -185,7 +184,6 @@ Buka [http://localhost:3000](http://localhost:3000)
 | `npm run start` | Start production server |
 | `npm run lint` | Lint all workspaces |
 | `npm run test` | Run tests in all workspaces |
-| `npm run qa:docs` | E2E QA untuk docs generation (apps/web) |
 
 ## Environment Variables
 
@@ -213,29 +211,3 @@ Buka [http://localhost:3000](http://localhost:3000)
 | `GITHUB_CLONE_TIMEOUT` | `300000` (5 min) | Timeout clone GitHub repo |
 | `GITHUB_DEFAULT_BRANCH` | `main` | Default branch untuk clone |
 | `NEXTAUTH_URL` | - | URL publik aplikasi |
-
-## CI/CD dan Deploy
-
-- `push` dan `pull_request` menjalankan CI via `.github/workflows/ci.yml`.
-- `push` ke `main` atau `master` memicu deploy ke namespace `wiki-team` via `.github/workflows/deploy.yml`.
-- Secret runtime diambil dari GitHub Secrets: `DATABASE_URL`, `KUBE_CONFIG_DATA`, `OPENAI_API_KEY`, `NEXTAUTH_SECRET`, `ENCRYPTION_SECRET_KEY`, `DOCKERHUB_TOKEN`.
-
-### Deploy manual
-
-```bash
-bash scripts/manual-deploy.sh
-```
-
-Script akan build image, push ke DockerHub (`hshinosa`), lalu apply ke cluster `wiki-team`. File yang dibaca:
-
-- `.env.local`, `.env.deploy.local`
-- `wiki-team/db-credentials.txt`, `wiki-team/domain.txt`, `wiki-team/kubeconfig.yaml`
-
-Simpan secret deploy di `.env.deploy.local` (tidak masuk git). Format bisa dilihat dari `.env.deploy.example`.
-
-## Import Pattern
-
-```typescript
-import { config, CodebaseAnalysis } from '@codebase-wiki/api';
-import { CodebaseAnalysisService } from '@codebase-wiki/api/services/codebase-analysis';
-```

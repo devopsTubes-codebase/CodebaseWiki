@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_USER: codebase_wiki
+          POSTGRES_PASSWORD: codebase_wiki
+          POSTGRES_DB: codebase_wiki
+        options: >-
+          --health-cmd="pg_isready -U codebase_wiki -d codebase_wiki"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+
+    env:
+      DATABASE_URL: postgresql://codebase_wiki:codebase_wiki@localhost:5432/codebase_wiki
+      OPENAI_API_KEY: changeme-openai-api-key
+      OPENAI_BASE_URL: https://api.openai.com/v1
+      AI_MODEL: gpt-4-turbo-preview
+      AI_EMBEDDING_MODEL: text-embedding-3-small
+      GEMINI_API_KEY: ""
+      GEMINI_BASE_URL: https://generativelanguage.googleapis.com/v1beta
+      GEMINI_EMBEDDING_MODEL: text-embedding-004
+      GITHUB_CLONE_TIMEOUT: "300000"
+      GITHUB_DEFAULT_BRANCH: main
+      MAX_ZIP_SIZE: "52428800"
+      CLEANUP_TTL: "1800000"
+      TEMP_STORAGE_PATH: /tmp/codebase-wiki
+      DOCS_STORAGE_PATH: /tmp/codebase-wiki-docs
+      VECTOR_INDEX_PATH: /tmp/codebase-wiki-index
+      ENCRYPTION_SECRET_KEY: changeme-encryption-secret-key-32-chars
+      NEXTAUTH_URL: http://localhost:3000
+      NEXTAUTH_SECRET: dev-secret
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm run test
+
+      - name: Build
+        run: npm run build

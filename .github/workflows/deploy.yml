@@ -1,0 +1,120 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      IMAGE_NAME: docker.io/hshinosa/codebase-wiki
+      KUBE_NAMESPACE: wiki-team
+      NEXTAUTH_URL: https://wiki-team.hackathon.sev-2.com
+      INTERNAL_POSTGRES_ENABLED: "true"
+      INTERNAL_POSTGRES_HOST: codebase-wiki-postgres
+      INTERNAL_POSTGRES_PORT: "5432"
+      INTERNAL_POSTGRES_DB: codebase_wiki
+      INTERNAL_POSTGRES_USER: codebase_wiki
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build web app
+        run: npm run build --workspace=apps/web
+
+      - name: Log in to DockerHub
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: hshinosa
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.IMAGE_NAME }}:latest
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.30.0
+
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p "$HOME/.kube"
+          printf '%s' '${{ secrets.KUBE_CONFIG_DATA }}' | base64 --decode > "$HOME/.kube/config"
+
+      - name: Apply namespace and secrets
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
+          ENCRYPTION_SECRET_KEY: ${{ secrets.ENCRYPTION_SECRET_KEY }}
+          INTERNAL_POSTGRES_PASSWORD: ${{ secrets.INTERNAL_POSTGRES_PASSWORD }}
+        run: |
+          INTERNAL_POSTGRES_PASSWORD="${INTERNAL_POSTGRES_PASSWORD:-codebase_wiki_demo_password}"
+          DATABASE_URL="postgres://${INTERNAL_POSTGRES_USER}:${INTERNAL_POSTGRES_PASSWORD}@${INTERNAL_POSTGRES_HOST}:${INTERNAL_POSTGRES_PORT}/${INTERNAL_POSTGRES_DB}"
+
+          kubectl create namespace "$KUBE_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+
+          kubectl create secret generic codebase-wiki-postgres \
+            --namespace "$KUBE_NAMESPACE" \
+            --from-literal=POSTGRES_DB="$INTERNAL_POSTGRES_DB" \
+            --from-literal=POSTGRES_USER="$INTERNAL_POSTGRES_USER" \
+            --from-literal=POSTGRES_PASSWORD="$INTERNAL_POSTGRES_PASSWORD" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          kubectl create secret generic codebase-wiki-env \
+            --namespace "$KUBE_NAMESPACE" \
+            --from-literal=DATABASE_URL="$DATABASE_URL" \
+            --from-literal=DATABASE_SSL_ENABLED=false \
+            --from-literal=DATABASE_SSL_REJECT_UNAUTHORIZED=false \
+            --from-literal=DATABASE_SSL_ROOT_CERT= \
+            --from-literal=OPENAI_API_KEY="$OPENAI_API_KEY" \
+            --from-literal=OPENAI_BASE_URL=https://api.openai.com/v1 \
+            --from-literal=AI_MODEL=gpt-4-turbo-preview \
+            --from-literal=AI_EMBEDDING_MODEL=text-embedding-3-small \
+            --from-literal=GEMINI_API_KEY="$GEMINI_API_KEY" \
+            --from-literal=GEMINI_EMBEDDING_MODEL=text-embedding-004 \
+            --from-literal=ENCRYPTION_SECRET_KEY="$ENCRYPTION_SECRET_KEY" \
+            --from-literal=NEXTAUTH_URL="$NEXTAUTH_URL" \
+            --from-literal=NEXTAUTH_SECRET="$NEXTAUTH_SECRET" \
+            --from-literal=TEMP_STORAGE_PATH=/tmp/codebase-wiki \
+            --from-literal=DOCS_STORAGE_PATH=/tmp/codebase-wiki-docs \
+            --from-literal=VECTOR_INDEX_PATH=/tmp/codebase-wiki-index \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Apply Kubernetes manifests
+        run: kubectl apply -k deploy/k8s
+
+      - name: Wait for PostgreSQL rollout
+        run: kubectl rollout status deployment/codebase-wiki-postgres -n "$KUBE_NAMESPACE" --timeout=5m
+
+      - name: Update deployment image
+        run: kubectl set image deployment/codebase-wiki web=${{ env.IMAGE_NAME }}:${{ github.sha }} -n "$KUBE_NAMESPACE"
+
+      - name: Wait for rollout
+        run: kubectl rollout status deployment/codebase-wiki -n "$KUBE_NAMESPACE" --timeout=5m

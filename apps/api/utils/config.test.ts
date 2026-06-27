@@ -27,6 +27,7 @@ describe('backend config helpers', () => {
       process.env.DATABASE_SSL_ROOT_CERT = 'root-cert';
 
       jest.resetModules();
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
       const { getBackendConfig: loadConfig } = require('../config') as typeof import('../config');
       const config = loadConfig();
 

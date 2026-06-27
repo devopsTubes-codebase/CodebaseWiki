@@ -52,7 +52,11 @@ jobs:
     if: github.event_name == 'push'
     strategy:
       matrix:
-        service: [frontend, backend]
+        include:
+          - service: web
+            image: hshinosa/codebase-wiki-frontend
+          - service: api
+            image: hshinosa/codebase-wiki-backend
     
     steps:
       - name: Checkout code
@@ -72,7 +76,7 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: |
-            ${{ matrix.service == 'frontend' && env.FRONTEND_IMAGE || env.BACKEND_IMAGE }}
+            ${{ matrix.image }}
           tags: |
             type=ref,event=branch
             type=ref,event=pr
